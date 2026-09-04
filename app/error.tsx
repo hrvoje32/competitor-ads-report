@@ -1,0 +1,2 @@
+"use client";
+export default function Error({ reset }: { error: Error; reset: () => void }) { return <div className="card max-w-lg p-7"><h1 className="text-lg font-bold">Something went wrong</h1><p className="mt-2 text-sm text-slate-500">Please try again. If the problem continues, check that the local database migration has run.</p><button className="button mt-5" onClick={reset}>Try again</button></div>; }

@@ -1,0 +1,50 @@
+{
+  "name": "competitor-ads-report",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint .",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "tsx prisma/seed.ts",
+    "data:export-local": "tsx scripts/export-local-data.ts",
+    "data:inventory-local-files": "tsx scripts/inventory-local-files.ts",
+    "data:import-local": "tsx scripts/import-local-data.ts --confirm",
+    "storage:migrate-local": "tsx scripts/migrate-local-files-to-supabase.ts --confirm"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@google-cloud/bigquery": "^9.0.3",
+    "@prisma/client": "^6.19.0",
+    "@supabase/ssr": "^0.12.5",
+    "@supabase/supabase-js": "^2.115.0",
+    "@vercel/oidc": "^3.8.5",
+    "google-auth-library": "^11.0.2",
+    "next": "^16.3.4",
+    "openai": "^7.10.0",
+    "playwright": "^1.62.1",
+    "pptxgenjs": "^4.0.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-easy-crop": "^6.2.3",
+    "sharp": "^0.35.4",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.3.4",
+    "prisma": "^6.19.0",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3"
+  }
+}

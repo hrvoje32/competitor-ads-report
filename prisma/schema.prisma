@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum ReportStatus {
+  DRAFT
+  COMPLETE
+}
+enum AdSource {
+  GOOGLE
+  META
+}
+
+model Brand {
+  id String @id @default(cuid())
+  name String @unique
+  logoPath String?
+  websiteUrl String?
+  googleTransparencyUrl String?
+  googleAdvertiserId String?
+  metaAdLibraryUrl String?
+  metaPageId String?
+  countryCode String @default("HR")
+  sortOrder Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  brandReports BrandReport[]
+}
+
+model Report {
+  id String @id @default(cuid())
+  title String
+  month Int
+  year Int
+  countryCode String @default("HR")
+  status ReportStatus @default(DRAFT)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  brandReports BrandReport[]
+}
+
+model BrandReport {
+  id String @id @default(cuid())
+  reportId String
+  brandId String
+  included Boolean @default(true)
+  approved Boolean @default(false)
+  analysisJson String?
+  analysisEditedJson String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  adEvidence AdEvidence[]
+  @@unique([reportId, brandId])
+}
+
+model AdEvidence {
+  id String @id @default(cuid())
+  brandReportId String
+  source AdSource
+  externalId String?
+  sourceUrl String?
+  snapshotUrl String?
+  localImagePath String?
+  headline String?
+  body String?
+  platform String?
+  format String?
+  notes String?
+  firstShown DateTime?
+  lastShown DateTime?
+  reachLower Int?
+  reachUpper Int?
+  selectedForSlide Boolean @default(false)
+  selectedForAnalysisEvidence Boolean @default(false)
+  sortOrder Int @default(0)
+  cropX Float?
+  cropY Float?
+  cropWidth Float?
+  cropHeight Float?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  brandReport BrandReport @relation(fields: [brandReportId], references: [id], onDelete: Cascade)
+  @@unique([brandReportId, source, externalId])
+}

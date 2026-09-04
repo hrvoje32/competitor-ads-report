@@ -1,0 +1,1 @@
+-- The PostgreSQL baseline creates the correct cascading report relation.

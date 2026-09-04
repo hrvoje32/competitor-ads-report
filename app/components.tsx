@@ -1,0 +1,4 @@
+import Link from "next/link";
+export function PageHeader({ title, description, action }: { title: string; description?: string; action?: React.ReactNode }) { return <div className="mb-8 flex flex-wrap items-end justify-between gap-4"><div><h1 className="text-2xl font-bold tracking-tight">{title}</h1>{description && <p className="mt-1 text-sm text-slate-500">{description}</p>}</div>{action}</div>; }
+export function EmptyState({ title, detail, action }: { title: string; detail: string; action?: React.ReactNode }) { return <div className="card p-10 text-center"><h2 className="font-semibold">{title}</h2><p className="mx-auto mt-2 max-w-md text-sm text-slate-500">{detail}</p>{action && <div className="mt-5">{action}</div>}</div>; }
+export function BackLink({ href, children = "Back" }: { href: string; children?: React.ReactNode }) { return <Link href={href} className="mb-5 inline-block text-sm font-semibold text-teal-700 hover:underline">← {children}</Link>; }

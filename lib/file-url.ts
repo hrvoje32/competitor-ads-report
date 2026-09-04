@@ -1,0 +1,1 @@
+export function browserFileUrl(filePath: string | null | undefined) { if (!filePath) return ""; if (filePath.startsWith("/uploads/")) return filePath; return "/api/storage/file?path=" + encodeURIComponent(filePath); }
