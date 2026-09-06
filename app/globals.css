@@ -1,8 +1,8 @@
 @import "tailwindcss";
-:root { --ink: #17222d; --line: #e4e9ef; --accent: #126a67; --paper: #f6f8fa; }
+:root { --ink: #162334; --line: #dce4ec; --accent: #0b62a9; --paper: #f5f7fa; }
 * { box-sizing: border-box; } body { margin: 0; background: var(--paper); color: var(--ink); font-family: Arial, Helvetica, sans-serif; }
 input, select, textarea { width: 100%; border: 1px solid #cfd8e3; border-radius: .5rem; background: white; padding: .65rem .75rem; font: inherit; }
-input:focus, select:focus { outline: 2px solid #7dd3ce; border-color: var(--accent); } button { cursor: pointer; }
+input:focus, select:focus { outline: 2px solid #8abbe0; border-color: var(--accent); } button { cursor: pointer; }
 .card { border: 1px solid var(--line); background: white; border-radius: .85rem; box-shadow: 0 1px 2px #17222d08; }
-.button { display: inline-flex; align-items: center; justify-content: center; border-radius: .5rem; padding: .65rem .9rem; font-size: .875rem; font-weight: 700; background: var(--accent); color: white; border: 1px solid var(--accent); }.button:hover { background: #0d5553; }.button-secondary { background: white; color: #334155; border-color: #cfd8e3; }.label { display: block; margin-bottom: .35rem; font-size: .8rem; font-weight: 700; color: #475569; }
+.button { display: inline-flex; align-items: center; justify-content: center; border-radius: .5rem; padding: .65rem .9rem; font-size: .875rem; font-weight: 700; background: var(--accent); color: white; border: 1px solid var(--accent); }.button:hover { background: #084d85; }.button-secondary { background: white; color: #334155; border-color: #cfd8e3; }.label { display: block; margin-bottom: .35rem; font-size: .8rem; font-weight: 700; color: #475569; }
 .brand-option input[type="checkbox"] { width: 1rem; min-width: 1rem; height: 1rem; margin: 0; padding: 0; accent-color: var(--accent); }

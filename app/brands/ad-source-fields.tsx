@@ -61,7 +61,7 @@ export default function AdSourceFields({ brandName, initialAdvertisers, initialM
         <button type="button" className="button button-secondary" disabled={loading} onClick={testGoogle}>Test Google Connection</button>
       </div>
       {message && <p className="mt-2 text-xs text-slate-600">{message}</p>}
-      {searchResults.length > 0 && <div className="mt-3 max-h-64 overflow-auto rounded-lg border border-slate-200">{searchResults.map(item => <button type="button" key={item.advertiserId} onClick={() => addSearchResult(item)} className="block w-full border-b border-slate-100 p-3 text-left text-sm last:border-0 hover:bg-teal-50"><span className="block font-semibold">{item.disclosedName || "No disclosed name"}</span><span className="block text-xs text-slate-500">ID: {item.advertiserId}{item.legalName ? ` · ${item.legalName}` : ""}{item.location ? ` · ${item.location}` : ""}</span></button>)}</div>}
+      {searchResults.length > 0 && <div className="mt-3 max-h-64 overflow-auto rounded-lg border border-slate-200">{searchResults.map(item => <button type="button" key={item.advertiserId} onClick={() => addSearchResult(item)} className="block w-full border-b border-slate-100 p-3 text-left text-sm last:border-0 hover:bg-blue-50"><span className="block font-semibold">{item.disclosedName || "No disclosed name"}</span><span className="block text-xs text-slate-500">ID: {item.advertiserId}{item.legalName ? ` · ${item.legalName}` : ""}{item.location ? ` · ${item.location}` : ""}</span></button>)}</div>}
     </section>
 
     <section className="md:col-span-2">

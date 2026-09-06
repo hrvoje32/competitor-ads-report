@@ -53,7 +53,7 @@ function EvidenceCard({ item, index, total, analysisEvidenceCount, tab, reportId
         {item.body && <p className="mt-1 line-clamp-3 text-sm text-slate-600">{item.body}</p>}
         <p className="mt-2 text-xs text-slate-500">{item.platform || "Platform not specified"}{item.format ? ` · ${item.format}` : ""}</p>
         <p className="text-xs text-slate-500">{date(item.firstShown) || "No start date"}{item.lastShown ? ` – ${date(item.lastShown)}` : ""}</p>
-        {item.duplicateGroupCount > 1 && <p className="text-xs font-semibold text-teal-700">{item.duplicateGroupCount} related ads in this creative group</p>}
+        {item.duplicateGroupCount > 1 && <p className="text-xs font-semibold text-blue-700">{item.duplicateGroupCount} related ads in this creative group</p>}
         {item.captureStatus === "CAPTURING" && <p className="text-xs font-semibold text-indigo-700">Creative capture in progress</p>}
         {item.captureStatus === "CAPTURE_FAILED" && <p className="text-xs font-semibold text-rose-700">Capture failed{item.captureError ? `: ${item.captureError}` : ""}</p>}
         {meta?.euReach?.lower !== null && meta?.euReach?.lower !== undefined && <p className="text-xs text-slate-500">EU reach: {meta.euReach.lower}{meta.euReach.upper ? `–${meta.euReach.upper}` : "+"}</p>}

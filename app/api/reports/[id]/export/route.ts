@@ -7,8 +7,8 @@ import { getCroppedImageBuffer } from "@/lib/uploads";
 export const runtime = "nodejs";
 
 const W = 13.333;
-const TEAL = "102D35";
-const ACCENT = "159B93";
+const NAVY = "0B2440";
+const ACCENT = "0B62A9";
 const INK = "17222D";
 const MUTED = "64748B";
 const PAPER = "F7F9FA";
@@ -66,7 +66,7 @@ function contain(box: { x: number; y: number; w: number; h: number }, image: { w
 
 function addHeader(slide: PptxGenJS.Slide, brand: string, title: string, period: string) {
   slide.background = { color: PAPER };
-  slide.addShape(RECT, { x: 0, y: 0, w: W, h: 1.18, fill: { color: TEAL }, line: { color: TEAL } });
+  slide.addShape(RECT, { x: 0, y: 0, w: W, h: 1.18, fill: { color: NAVY }, line: { color: NAVY } });
   slide.addText(`${brand.toUpperCase()} | ${title} | ${period.toUpperCase()}`, {
     x: .48, y: .32, w: 10.8, h: .3, fontFace: "Arial", fontSize: 16, bold: true,
     color: "FFFFFF", margin: 0, breakLine: false, fit: "shrink",
@@ -128,7 +128,7 @@ async function addEvidenceGrid(
     slide.addImage({ data: image.data, ...contain(box, image) });
     slide.addShape(RECT, {
       x: box.x + .08, y: box.y + .08, w: .32, h: .22,
-      fill: { color: TEAL, transparency: 8 }, line: { color: TEAL },
+      fill: { color: NAVY, transparency: 8 }, line: { color: NAVY },
     });
     slide.addText(labels.get(item.id) ?? `${prefix}${index + 1}`, {
       x: box.x + .08, y: box.y + .105, w: .32, h: .12,
@@ -325,7 +325,7 @@ async function addAnalysisSlide(
     const label = labels.get(item.id) ?? (item.source === "GOOGLE" ? `G${index + 1}` : `M${index + 1}`);
     slide.addShape(RECT, {
       x: box.x + .08, y: box.y + .08, w: .38, h: .23,
-      fill: { color: TEAL }, line: { color: TEAL },
+      fill: { color: NAVY }, line: { color: NAVY },
     });
     slide.addText(label, {
       x: box.x + .08, y: box.y + .105, w: .38, h: .1,
@@ -393,7 +393,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     if (cover) {
       const slide = pptx.addSlide();
-      slide.background = { color: TEAL };
+      slide.background = { color: NAVY };
       slide.addText(language === "HR" ? "IZVJEŠĆE O OGLAŠAVANJU KONKURENCIJE" : "COMPETITOR ADS REPORT", {
         x: .68, y: 2.48, w: 11.9, h: .42, fontFace: "Arial",
         fontSize: 27, bold: true, color: "FFFFFF", align: "center", margin: 0,

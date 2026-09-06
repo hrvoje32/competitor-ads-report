@@ -126,7 +126,7 @@ export async function googleTextEvidenceCard(input: { headline?: string | null; 
     <g class="url">${tspans(displayUrl, 120, 205, 40)}</g>
     <g class="headline">${tspans(headline, 120, 300, 68)}</g>
     <g class="body">${tspans(body, 120, 520, 44)}</g>
-    ${cta.length ? `<rect x="1080" y="710" width="200" height="62" rx="10" fill="#159b93"/><g class="cta">${tspans(cta, 1110, 752, 35)}</g>` : ""}
+    ${cta.length ? `<rect x="1080" y="710" width="200" height="62" rx="10" fill="#0b62a9"/><g class="cta">${tspans(cta, 1110, 752, 35)}</g>` : ""}
     <text class="label" x="120" y="790">GOOGLE AD RECONSTRUCTED FROM TRANSPARENCY CENTER DATA</text>
   </svg>`;
   return sharp(Buffer.from(svg)).webp({ quality: 88 }).toBuffer();

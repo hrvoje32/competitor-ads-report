@@ -30,7 +30,7 @@ export default async function NewReportPage() {
         <legend className="label">Include brands *</legend>
         <p className="mb-3 text-sm text-slate-500">Select the competitors to include in this report.</p>
         <div className="grid gap-3 sm:grid-cols-2">{brands.map(brand =>
-          <label className="brand-option flex min-h-12 cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-4 py-3 transition hover:border-teal-500 hover:bg-teal-50" key={brand.id}>
+          <label className="brand-option flex min-h-12 cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-4 py-3 transition hover:border-blue-500 hover:bg-blue-50" key={brand.id}>
             <input type="checkbox" name="brandIds" value={brand.id} defaultChecked/>
             <span className="ml-3 font-medium text-slate-800">{brand.name}</span>
           </label>
