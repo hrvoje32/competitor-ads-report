@@ -10,6 +10,10 @@ const serverSchema = z.object({
   GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID: optional,
 });
 export const env = serverSchema.parse(process.env);
+export function openAIModel() {
+  const configured = process.env.OPENAI_MODEL?.trim() || "gpt-5.4-mini";
+  return configured === "5.4-mini" ? "gpt-5.4-mini" : configured;
+}
 export function requireServerEnv(...names: Array<keyof typeof env>) {
   const missing = names.filter(name => !env[name]);
   if (missing.length) throw new Error("Configuration required: " + missing.join(", ") + ".");

@@ -6,6 +6,7 @@ import { analysisJsonSchema, analysisSchema, normalizeAnalysisResponse } from "@
 import { getCroppedImageBuffer } from "@/lib/uploads";
 import { refreshBrandMediaWarnings } from "@/lib/media-status";
 import { earlierReportDate } from "@/lib/month-comparison";
+import { openAIModel } from "@/lib/env";
 
 export const runtime = "nodejs";
 
@@ -238,7 +239,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     }
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const response = await client.responses.create({
-      model: process.env.OPENAI_MODEL || "gpt-5.4-mini",
+      model: openAIModel(),
       store: false,
       input: [{ role: "user", content }],
       text: {
