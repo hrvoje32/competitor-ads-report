@@ -15,7 +15,7 @@ async function main() {
   const evidence = await prisma.adEvidence.findMany({ include: { brandReport: { include: { report: true } } } });
   for (const item of evidence) {
     if (!item.localImagePath?.startsWith("/uploads/")) { skipped++; continue; }
-    try { const source = item.source === "GOOGLE" ? "google" : "meta"; const target = evidenceObjectPath(item.brandReport.report.year, item.brandReport.report.month, item.brandReport.brandId, source, path.extname(item.localImagePath).slice(1) || "webp"); if (await fileExists(target)) { skipped++; continue; } await saveFile({ path: target, contentType: contentType(item.localImagePath) }, await readFile(localPath(item.localImagePath))); await prisma.adEvidence.update({ where: { id: item.id }, data: { localImagePath: target } }); uploaded++; } catch { missing++; }
+    try { const source = item.source === "GOOGLE" ? "google" : "meta"; const target = evidenceObjectPath(item.brandReport.report.id, item.brandReport.brandId, source, path.extname(item.localImagePath).slice(1) || "webp"); if (await fileExists(target)) { skipped++; continue; } await saveFile({ path: target, contentType: contentType(item.localImagePath) }, await readFile(localPath(item.localImagePath))); await prisma.adEvidence.update({ where: { id: item.id }, data: { localImagePath: target } }); uploaded++; } catch { missing++; }
   }
   console.log(JSON.stringify({ uploaded, skipped, missing, originalsDeleted: false }, null, 2));
 }

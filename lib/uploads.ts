@@ -13,16 +13,36 @@ export async function saveLogo(file: File, brandId: string) {
 const allowedImages: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 export type CropValues = { cropX: number; cropY: number; cropWidth: number; cropHeight: number };
 
-export async function saveEvidenceImage(file: File, report: { year: number; month: number }, brandId: string, source: "google" | "meta") {
-  if (!file || file.size === 0) throw new Error("Choose at least one image.");
-  const extension = allowedImages[file.type];
-  if (!extension) throw new Error("Images must be JPG, JPEG, PNG, or WEBP.");
-  if (file.size > 15 * 1024 * 1024) throw new Error("Each image must be 15 MB or smaller.");
-  return saveFile({ path: evidenceObjectPath(report.year, report.month, brandId, source, extension), contentType: file.type }, Buffer.from(await file.arrayBuffer()));
+async function optimizeEvidenceImage(buffer: Buffer) {
+  return sharp(buffer, { limitInputPixels: 40_000_000 })
+    .rotate()
+    .flatten({ background: "#ffffff" })
+    .resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true })
+    .webp({ quality: 82, effort: 4 })
+    .toBuffer();
 }
 
-export async function saveEvidenceBuffer(buffer: Buffer, report: { year: number; month: number }, brandId: string, source: "google" | "meta") {
-  return saveFile({ path: evidenceObjectPath(report.year, report.month, brandId, source, "png"), contentType: "image/png" }, buffer);
+export async function saveEvidenceImageDetails(file: File, report: { id: string }, brandId: string, source: "google" | "meta") {
+  if (!file || file.size === 0) throw new Error("Choose at least one image.");
+  if (!allowedImages[file.type]) throw new Error("Images must be JPG, JPEG, PNG, or WEBP.");
+  if (file.size > 15 * 1024 * 1024) throw new Error("Each image must be 15 MB or smaller.");
+  const output = await optimizeEvidenceImage(Buffer.from(await file.arrayBuffer()));
+  const path = await saveFile({ path: evidenceObjectPath(report.id, brandId, source), contentType: "image/webp" }, output);
+  return { path, byteSize: output.length };
+}
+
+export async function saveEvidenceImage(file: File, report: { id: string }, brandId: string, source: "google" | "meta") {
+  return (await saveEvidenceImageDetails(file, report, brandId, source)).path;
+}
+
+export async function saveEvidenceBufferDetails(buffer: Buffer, report: { id: string }, brandId: string, source: "google" | "meta") {
+  const output = await optimizeEvidenceImage(buffer);
+  const path = await saveFile({ path: evidenceObjectPath(report.id, brandId, source), contentType: "image/webp" }, output);
+  return { path, byteSize: output.length };
+}
+
+export async function saveEvidenceBuffer(buffer: Buffer, report: { id: string }, brandId: string, source: "google" | "meta", _format: "png" | "webp" = "png") {
+  return (await saveEvidenceBufferDetails(buffer, report, brandId, source)).path;
 }
 
 export async function deleteLocalUpload(localImagePath: string | null) { await deleteFile(localImagePath); }

@@ -1,7 +1,14 @@
-import { lookup } from "dns/promises";
-import net from "net";
-import { chromium } from "playwright";
+import { createCreativeBrowser } from "@/lib/browser";
+import { assertPublicHttpUrl } from "@/lib/browser/security";
+import type { CreativeSource } from "@/lib/browser/types";
 
-function privateIp(ip: string) { const version = net.isIP(ip); if (version === 4) { const [a, b] = ip.split(".").map(Number); return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127); } if (version === 6) { const normalized = ip.toLowerCase(); return normalized === "::1" || normalized.startsWith("fe80:") || normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("::ffff:127.") || normalized.startsWith("::ffff:10.") || normalized.startsWith("::ffff:192.168.") || normalized.startsWith("::ffff:172."); } return true; }
-export async function assertPublicHttpUrl(raw: string) { let url: URL; try { url = new URL(raw); } catch { throw new Error("Automatic capture unavailable. Open the source and upload a screenshot manually."); } const host = url.hostname.replace(/^\[|\]$/g, ""); if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Automatic capture unavailable. Open the source and upload a screenshot manually."); if (host === "localhost" || host.endsWith(".localhost") || (net.isIP(host) !== 0 && privateIp(host))) throw new Error("Automatic capture unavailable. Open the source and upload a screenshot manually."); try { const records = await lookup(host, { all: true }); if (!records.length || records.some(record => privateIp(record.address))) throw new Error("Unsafe address"); } catch { throw new Error("Automatic capture unavailable. Open the source and upload a screenshot manually."); } return url; }
-export async function capturePublicPage(rawUrl: string) { await assertPublicHttpUrl(rawUrl); const browser = await chromium.launch({ headless: true, timeout: 15000 }); try { const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, javaScriptEnabled: true }); const page = await context.newPage(); await page.route("**/*", async route => { try { await assertPublicHttpUrl(route.request().url()); await route.continue(); } catch { await route.abort(); } }); await page.goto(rawUrl, { waitUntil: "domcontentloaded", timeout: 15000 }); await page.waitForTimeout(1200); for (const selector of ["[data-testid*='creative']", "[data-testid*='ad_snapshot']", "[data-testid*='ad-creative']"]) { const locator = page.locator(selector); if (await locator.count() === 1) return await locator.screenshot({ type: "png", timeout: 8000 }); } return await page.screenshot({ type: "png", timeout: 8000 }); } finally { await browser.close(); } }
+export { assertPublicHttpUrl };
+
+export async function capturePublicPage(rawUrl: string, source: CreativeSource = "GOOGLE") {
+  const browser = await createCreativeBrowser();
+  try {
+    return await browser.capture({ source, url: rawUrl });
+  } finally {
+    await browser.close();
+  }
+}

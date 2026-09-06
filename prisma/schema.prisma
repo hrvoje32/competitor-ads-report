@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -12,81 +12,243 @@ enum ReportStatus {
   DRAFT
   COMPLETE
 }
+
+enum ReportLanguage {
+  HR
+  EN
+}
+
 enum AdSource {
   GOOGLE
   META
 }
 
+enum AutomationStatus {
+  PENDING
+  FETCHING
+  CAPTURING
+  ANALYSING
+  READY
+  FAILED
+}
+
+enum CaptureStatus {
+  PENDING
+  CAPTURING
+  READY
+  CAPTURE_FAILED
+}
+
+enum ProviderRunStatus {
+  PENDING
+  RUNNING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
+enum AdMediaStatus {
+  PENDING
+  DOWNLOADING
+  STORED
+  FAILED
+  DISCARDED
+}
+
+enum AdMediaKind {
+  IMAGE
+  VIDEO_THUMBNAIL
+}
+
 model Brand {
-  id String @id @default(cuid())
-  name String @unique
-  logoPath String?
-  websiteUrl String?
-  googleTransparencyUrl String?
-  googleAdvertiserId String?
-  metaAdLibraryUrl String?
-  metaPageId String?
-  countryCode String @default("HR")
-  sortOrder Int @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  brandReports BrandReport[]
+  id                String                      @id @default(cuid())
+  name              String                      @unique
+  logoPath          String?
+  websiteUrl        String?
+  googleDomain      String?
+  countryCode       String                      @default("HR")
+  sortOrder         Int                         @default(0)
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
+  brandReports      BrandReport[]
+  googleAdvertisers GoogleAdvertiser[]
+  googleCandidates  GoogleAdvertiserCandidate[]
+  metaPages         MetaPage[]
+}
+
+model GoogleAdvertiser {
+  id           String  @id @default(cuid())
+  brandId      String
+  advertiserId String
+  label        String?
+  brand        Brand   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@unique([brandId, advertiserId])
+  @@index([brandId])
+}
+
+model GoogleAdvertiserCandidate {
+  id            String   @id @default(cuid())
+  brandId       String
+  advertiserId  String
+  disclosedName String?
+  legalName     String?
+  confidence    Float
+  selected      Boolean  @default(false)
+  reason        String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  brand         Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@unique([brandId, advertiserId])
+  @@index([brandId, confidence])
+}
+
+model MetaPage {
+  id       String  @id @default(cuid())
+  brandId  String
+  pageId   String
+  pageName String?
+  brand    Brand   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@unique([brandId, pageId])
+  @@index([brandId])
 }
 
 model Report {
-  id String @id @default(cuid())
-  title String
-  month Int
-  year Int
-  countryCode String @default("HR")
-  status ReportStatus @default(DRAFT)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  brandReports BrandReport[]
+  id             String         @id @default(cuid())
+  title          String
+  month          Int
+  year           Int
+  startDate      DateTime       @db.Date
+  endDate        DateTime       @db.Date
+  countryCode    String         @default("HR")
+  language       ReportLanguage @default(HR)
+  status         ReportStatus   @default(DRAFT)
+  mediaCleanedAt DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  brandReports   BrandReport[]
 }
 
 model BrandReport {
-  id String @id @default(cuid())
-  reportId String
-  brandId String
-  included Boolean @default(true)
-  approved Boolean @default(false)
-  analysisJson String?
-  analysisEditedJson String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
-  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
-  adEvidence AdEvidence[]
+  id                    String           @id @default(cuid())
+  reportId              String
+  brandId               String
+  previousBrandReportId String?
+  included              Boolean          @default(true)
+  approved              Boolean          @default(false)
+  analysisJson          String?
+  analysisEditedJson    String?
+  automationStatus      AutomationStatus @default(PENDING)
+  googleStatus          AutomationStatus @default(PENDING)
+  metaStatus            AutomationStatus @default(PENDING)
+  automationError       String?
+  googleError           String?
+  metaError             String?
+  googleMediaError      String?
+  metaMediaError        String?
+  automationStartedAt   DateTime?
+  automationEndedAt     DateTime?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  report                Report           @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  brand                 Brand            @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  previousBrandReport   BrandReport?     @relation("BrandReportPreviousMonth", fields: [previousBrandReportId], references: [id], onDelete: SetNull)
+  nextBrandReports      BrandReport[]    @relation("BrandReportPreviousMonth")
+  adEvidence            AdEvidence[]
+  providerRuns          AdProviderRun[]
+
   @@unique([reportId, brandId])
+  @@index([previousBrandReportId])
 }
 
 model AdEvidence {
-  id String @id @default(cuid())
-  brandReportId String
-  source AdSource
-  externalId String?
-  sourceUrl String?
-  snapshotUrl String?
-  localImagePath String?
-  headline String?
-  body String?
-  platform String?
-  format String?
-  notes String?
-  firstShown DateTime?
-  lastShown DateTime?
-  reachLower Int?
-  reachUpper Int?
-  selectedForSlide Boolean @default(false)
-  selectedForAnalysisEvidence Boolean @default(false)
-  sortOrder Int @default(0)
-  cropX Float?
-  cropY Float?
-  cropWidth Float?
-  cropHeight Float?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  brandReport BrandReport @relation(fields: [brandReportId], references: [id], onDelete: Cascade)
+  id                          String        @id @default(cuid())
+  brandReportId               String
+  source                      AdSource
+  externalId                  String?
+  sourceUrl                   String?
+  snapshotUrl                 String?
+  landingPageUrl              String?
+  localImagePath              String?
+  headline                    String?
+  body                        String?
+  description                 String?
+  cta                         String?
+  platform                    String?
+  format                      String?
+  notes                       String?
+  firstShown                  DateTime?
+  lastShown                   DateTime?
+  reachLower                  Int?
+  reachUpper                  Int?
+  selectedForSlide            Boolean       @default(false)
+  selectedForAnalysisEvidence Boolean       @default(false)
+  captureStatus               CaptureStatus @default(PENDING)
+  captureError                String?
+  perceptualHash              String?
+  normalizedTextHash          String?
+  duplicateGroupKey           String?
+  duplicateGroupCount         Int           @default(1)
+  representativeScore         Float?
+  storedMediaBytes            Int?
+  rawData                     Json?
+  sortOrder                   Int           @default(0)
+  cropX                       Float?
+  cropY                       Float?
+  cropWidth                   Float?
+  cropHeight                  Float?
+  createdAt                   DateTime      @default(now())
+  updatedAt                   DateTime      @updatedAt
+  brandReport                 BrandReport   @relation(fields: [brandReportId], references: [id], onDelete: Cascade)
+  media                       AdMedia[]
+
   @@unique([brandReportId, source, externalId])
+  @@index([brandReportId, source, captureStatus])
+  @@index([brandReportId, duplicateGroupKey])
+}
+
+model AdProviderRun {
+  id                  String            @id @default(cuid())
+  brandReportId       String
+  source              AdSource
+  provider            String            @default("APIFY")
+  actorId             String
+  runId               String?
+  datasetId           String?
+  status              ProviderRunStatus @default(PENDING)
+  error               String?
+  itemCount           Int               @default(0)
+  mediaStoredCount    Int               @default(0)
+  inputJson           Json?
+  itemsPersistedAt    DateTime?
+  processingStartedAt DateTime?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  brandReport         BrandReport       @relation(fields: [brandReportId], references: [id], onDelete: Cascade)
+
+  @@unique([brandReportId, source])
+  @@index([status, updatedAt])
+}
+
+model AdMedia {
+  id           String        @id @default(cuid())
+  adEvidenceId String
+  kind         AdMediaKind
+  sourceUrl    String
+  storagePath  String?
+  byteSize     Int?
+  status       AdMediaStatus @default(PENDING)
+  error        String?
+  sortOrder    Int           @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  adEvidence   AdEvidence    @relation(fields: [adEvidenceId], references: [id], onDelete: Cascade)
+
+  @@unique([adEvidenceId, sourceUrl])
+  @@index([status, updatedAt])
+  @@index([adEvidenceId, sortOrder])
 }

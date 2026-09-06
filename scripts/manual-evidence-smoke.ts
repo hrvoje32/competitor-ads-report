@@ -5,7 +5,16 @@ import { deleteLocalUpload, getCroppedImageBuffer, saveEvidenceImage } from "../
 const prisma = new PrismaClient();
 async function main() {
   const brand = await prisma.brand.findFirstOrThrow();
-  const report = await prisma.report.create({ data: { title: "Smoke test", month: 9, year: 2026, brandReports: { create: { brandId: brand.id } } } });
+  const report = await prisma.report.create({
+    data: {
+      title: "Smoke test",
+      month: 9,
+      year: 2026,
+      startDate: new Date("2026-09-02T00:00:00.000Z"),
+      endDate: new Date("2026-09-29T00:00:00.000Z"),
+      brandReports: { create: { brandId: brand.id } },
+    },
+  });
   const brandReport = await prisma.brandReport.findFirstOrThrow({ where: { reportId: report.id, brandId: brand.id } });
   const png = await sharp({ create: { width: 80, height: 60, channels: 3, background: "#126a67" } }).png().toBuffer();
   const files = [new File([png], "ad-one.png", { type: "image/png" }), new File([png], "ad-two.png", { type: "image/png" })];

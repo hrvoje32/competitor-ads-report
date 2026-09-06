@@ -8,12 +8,12 @@ import { resetCrop, saveCrop } from "./actions";
 type Props = {
   imagePath: string;
   reportId: string;
-  brandId: string;
+  brandReportId: string;
   evidenceId: string;
   onClose: () => void;
 };
 
-export default function CropDialog({ imagePath, reportId, brandId, evidenceId, onClose }: Props) {
+export default function CropDialog({ imagePath, reportId, brandReportId, evidenceId, onClose }: Props) {
   const router = useRouter();
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
@@ -22,7 +22,7 @@ export default function CropDialog({ imagePath, reportId, brandId, evidenceId, o
   const [pending, startTransition] = useTransition();
 
   const reset = () => startTransition(async () => {
-    await resetCrop(reportId, brandId, evidenceId);
+    await resetCrop(reportId, brandReportId, evidenceId);
     setCrop({ x: 0, y: 0 });
     setZoom(1);
     setArea(null);
@@ -35,7 +35,7 @@ export default function CropDialog({ imagePath, reportId, brandId, evidenceId, o
       return;
     }
     startTransition(async () => {
-      await saveCrop(reportId, brandId, evidenceId, area);
+      await saveCrop(reportId, brandReportId, evidenceId, area);
       router.refresh();
       onClose();
     });

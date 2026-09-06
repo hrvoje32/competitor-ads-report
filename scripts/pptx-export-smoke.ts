@@ -9,7 +9,16 @@ import { GET } from "../app/api/reports/[id]/export/route";
 const prisma = new PrismaClient();
 async function main() {
   const brand = await prisma.brand.findFirstOrThrow();
-  const report = await prisma.report.create({ data: { title: "Č Ć Ž Š Đ", month: 9, year: 2026, brandReports: { create: { brandId: brand.id } } } });
+  const report = await prisma.report.create({
+    data: {
+      title: "Č Ć Ž Š Đ",
+      month: 9,
+      year: 2026,
+      startDate: new Date("2026-09-02T00:00:00.000Z"),
+      endDate: new Date("2026-09-29T00:00:00.000Z"),
+      brandReports: { create: { brandId: brand.id } },
+    },
+  });
   const brandReport = await prisma.brandReport.findFirstOrThrow({ where: { reportId: report.id, brandId: brand.id } });
   const buffer = await sharp({ create: { width: 100, height: 70, channels: 3, background: "#159b93" } }).png().toBuffer();
   const googlePath = await saveEvidenceImage(new File([buffer], "google.png", { type: "image/png" }), report, brand.id, "google");

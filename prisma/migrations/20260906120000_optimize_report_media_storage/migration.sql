@@ -1,0 +1,10 @@
+ALTER TYPE "AdMediaStatus" ADD VALUE 'DISCARDED';
+
+ALTER TABLE "Report"
+ADD COLUMN "mediaCleanedAt" TIMESTAMP(3);
+
+ALTER TABLE "AdEvidence"
+ADD COLUMN "storedMediaBytes" INTEGER;
+
+ALTER TABLE "AdMedia"
+ADD COLUMN "byteSize" INTEGER;
