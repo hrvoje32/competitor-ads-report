@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { deleteReport } from "../actions";
 import ExportControls from "./export-controls";
+import DeleteReportButton from "../delete-report-button";
 
 const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds));
 
@@ -65,9 +65,7 @@ export default function ReportActions({ reportId, blocked, processing, warnings,
         <button className="button" disabled={pending || processing} onClick={() => run(false)}>{pending || processing ? "Automated analysis running…" : "Run Automated Analysis"}</button>
         {hasFailures && <button className="button button-secondary" disabled={pending || processing} onClick={() => run(true)}>Retry Failed</button>}
       </div>
-      <form action={deleteReport.bind(null, reportId)} onSubmit={event => { if (!confirm("Delete this report and all of its evidence? This cannot be undone.")) event.preventDefault(); }}>
-        <button className="button button-secondary border-rose-200 text-rose-700 hover:bg-rose-50" type="submit">Delete report</button>
-      </form>
+      <DeleteReportButton reportId={reportId} redirectAfterDelete/>
     </div>
     {error && <p className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
     <ExportControls reportId={reportId} blocked={blocked} processing={processing} warnings={warnings}/>

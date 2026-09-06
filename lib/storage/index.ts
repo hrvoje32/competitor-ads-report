@@ -20,6 +20,20 @@ export async function deleteFile(filePath: string | null | undefined) {
   if (isLegacy(filePath)) { try { await unlink(legacyPath(filePath)); } catch (error: unknown) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } return; }
   const { error } = await createAdminClient().storage.from(EVIDENCE_BUCKET).remove([safePath(filePath)]); if (error) throw new Error("Storage delete failed: " + error.message);
 }
+export async function deleteFiles(filePaths: Array<string | null | undefined>) {
+  const paths = [...new Set(filePaths.filter((item): item is string => Boolean(item)))];
+  const legacy = paths.filter(isLegacy);
+  const remote = paths.filter(item => !isLegacy(item)).map(safePath);
+  const legacyResults = await Promise.allSettled(legacy.map(deleteFile));
+  const failures: string[] = legacyResults.flatMap((result, index) => result.status === "rejected" ? [`${legacy[index]}: ${result.reason instanceof Error ? result.reason.message : "delete failed"}`] : []);
+  const storage = remote.length ? createAdminClient().storage.from(EVIDENCE_BUCKET) : null;
+  for (let index = 0; index < remote.length; index += 100) {
+    const batch = remote.slice(index, index + 100);
+    const { error } = await storage!.remove(batch);
+    if (error) failures.push(`${batch.length} stored file(s): ${error.message}`);
+  }
+  return { deleted: paths.length - failures.length, failures };
+}
 export async function downloadFile(filePath: string) {
   if (isLegacy(filePath)) return readFile(legacyPath(filePath));
   const { data, error } = await createAdminClient().storage.from(EVIDENCE_BUCKET).download(safePath(filePath));

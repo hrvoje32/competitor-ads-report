@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
-import { deleteLocalUpload } from "@/lib/uploads";
+import { deleteFiles } from "@/lib/storage";
 import { cleanupReportMedia } from "@/lib/report-media";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -100,17 +100,23 @@ export async function cleanupReportMediaAction(reportId: string) {
 }
 
 export async function deleteReport(id: string) {
-  const evidence = await prisma.adEvidence.findMany({
-    where: { brandReport: { reportId: id } },
-    select: { localImagePath: true, media: { select: { storagePath: true } } },
-  });
-  const paths = [...new Set(evidence.flatMap(item =>
-    [item.localImagePath, ...item.media.map(media => media.storagePath)]
-      .filter((path): path is string => Boolean(path))
-  ))];
-  await prisma.report.delete({ where: { id } });
-  await Promise.allSettled(paths.map(deleteLocalUpload));
+  let paths: Array<string | null> = [];
+  let deleted = 0;
+  try {
+    const evidence = await prisma.adEvidence.findMany({
+      where: { brandReport: { reportId: id } },
+      select: { localImagePath: true, media: { select: { storagePath: true } } },
+    });
+    paths = evidence.flatMap(item => [item.localImagePath, ...item.media.map(media => media.storagePath)]);
+    deleted = (await prisma.report.deleteMany({ where: { id } })).count;
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "The report could not be deleted." };
+  }
+  if (deleted) {
+    const cleanup = await deleteFiles(paths).catch(error => ({ failures: [error instanceof Error ? error.message : "Storage cleanup failed."] }));
+    if (cleanup.failures.length && process.env.NODE_ENV !== "production") console.warn(`Report ${id} was deleted, but some media cleanup failed.`, cleanup.failures);
+  }
   revalidatePath("/");
   revalidatePath("/reports");
-  redirect("/reports");
+  return {};
 }
