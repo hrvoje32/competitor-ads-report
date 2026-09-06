@@ -22,7 +22,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <aside className="border-b border-slate-200 bg-white p-6 text-slate-700 md:border-r md:border-b-0">
             <Link href="/" className="inline-block">
               <Image
-                src="/emil-frey-logo.webp"
+                src="/emil-frey-logo.png"
                 alt="Emil Frey"
                 width={160}
                 height={167}
