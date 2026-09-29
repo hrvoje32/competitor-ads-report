@@ -1,12 +1,16 @@
 "use client";
 
+import type { ProviderSelection } from "@/lib/ad-providers/selection";
+import ProviderFields from "./provider-fields";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds));
 
-export default function BrandAutomationButton({ reportId, brandReportId }: { reportId: string; brandReportId: string }) {
+export default function BrandAutomationButton({ reportId, brandReportId, initialProviders, processing }: { reportId: string; brandReportId: string; initialProviders: ProviderSelection; processing: boolean }) {
   const router = useRouter();
+  const [chosenProviders, setProviders] = useState<ProviderSelection | null>(null);
+  const providers = chosenProviders ?? initialProviders;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
@@ -17,7 +21,7 @@ export default function BrandAutomationButton({ reportId, brandReportId }: { rep
       const response = await fetch(`/api/reports/${reportId}/automate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brandReportId }),
+        body: JSON.stringify({ brandReportId, providers }),
       });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error || "Unable to start brand automation.");
@@ -43,7 +47,10 @@ export default function BrandAutomationButton({ reportId, brandReportId }: { rep
   };
 
   return <div className="grid justify-items-end gap-1">
-    <button className="button button-secondary shrink-0" disabled={pending} onClick={run}>{pending ? "Processing…" : "Regenerate Brand"}</button>
+    <details className="max-w-md text-sm"><summary className="cursor-pointer text-right text-slate-600">Change collection sources</summary>
+      <div className="py-3"><ProviderFields value={providers} onChange={setProviders} disabled={pending || processing}/></div>
+    </details>
+    <button className="button button-secondary shrink-0" disabled={pending || processing} onClick={run}>{pending ? "Processing…" : "Regenerate Brand"}</button>
     {error && <span className="max-w-64 text-right text-xs text-rose-700">{error}</span>}
   </div>;
 }

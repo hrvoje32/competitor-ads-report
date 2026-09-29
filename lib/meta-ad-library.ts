@@ -2,12 +2,40 @@ export type MetaAd = { id: string; pageId: string | null; pageName: string | nul
 type GraphResponse = { data?: Record<string, unknown>[]; paging?: { next?: string }; error?: { message?: string; type?: string; code?: number; error_subcode?: number } };
 
 function config() { const token = process.env.META_ACCESS_TOKEN, version = process.env.META_GRAPH_API_VERSION; if (!token || !version) throw new Error("Meta API not configured. Manual evidence upload is still available."); return { token, version }; }
-async function graph(url: URL) { const response = await fetch(url, { cache: "no-store" }); const payload = await response.json() as GraphResponse; if (!response.ok || payload.error) { const error = payload.error; throw new Error(`Meta API error${error?.code ? ` ${error.code}` : ""}${error?.type ? ` (${error.type})` : ""}: ${error?.message ?? "Request failed."}`); } return payload; }
+async function graph(url: URL) {
+  if (url.protocol !== "https:" || url.hostname !== "graph.facebook.com") throw new Error("Meta returned an invalid pagination URL.");
+  const requestUrl = new URL(url);
+  requestUrl.searchParams.delete("access_token");
+  const response = await fetch(requestUrl, { cache: "no-store", headers: { Authorization: `Bearer ${config().token}` }, signal: AbortSignal.timeout(30_000) });
+  const payload = await response.json() as GraphResponse;
+  if (!response.ok || payload.error) {
+    const error = payload.error;
+    const message = (error?.message ?? "Request failed.").split(config().token).join("[redacted]");
+    throw new Error(`Meta API error${error?.code ? ` ${error.code}` : ""}${error?.type ? ` (${error.type})` : ""}: ${message}`);
+  }
+  return payload;
+}
+
+export function publicMetaSnapshot(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    url.searchParams.delete("access_token");
+    return url.toString();
+  } catch { return null; }
+}
 function strings(value: unknown) { return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : []; }
 function first(value: unknown) { return strings(value)[0] ?? null; }
 function date(value: unknown) { return typeof value === "string" && value ? new Date(value) : null; }
-function reach(value: unknown) { if (!value || typeof value !== "object") return { lower: null, upper: null }; const item = value as Record<string, unknown>; return { lower: typeof item.lower_bound === "number" ? item.lower_bound : null, upper: typeof item.upper_bound === "number" ? item.upper_bound : null }; }
-function mapAd(row: Record<string, unknown>): MetaAd { const bodyParts = [...strings(row.ad_creative_bodies), ...strings(row.ad_creative_link_descriptions), ...strings(row.ad_creative_link_captions)]; const euReach = reach(row.eu_total_reach); return { id: String(row.id), pageId: typeof row.page_id === "string" ? row.page_id : null, pageName: typeof row.page_name === "string" ? row.page_name : null, creationTime: date(row.ad_creation_time), headline: first(row.ad_creative_link_titles), body: bodyParts.length ? [...new Set(bodyParts)].join("\n") : null, platform: strings(row.publisher_platforms).join(", ") || null, firstShown: date(row.ad_delivery_start_time), lastShown: date(row.ad_delivery_stop_time), snapshotUrl: typeof row.ad_snapshot_url === "string" ? row.ad_snapshot_url : null, reachLower: euReach.lower, reachUpper: euReach.upper, languages: strings(row.languages) }; }
+function reach(value: unknown) { if (typeof value === "number") return { lower: value, upper: value }; if (!value || typeof value !== "object") return { lower: null, upper: null }; const item = value as Record<string, unknown>; return { lower: typeof item.lower_bound === "number" ? item.lower_bound : null, upper: typeof item.upper_bound === "number" ? item.upper_bound : null }; }
+function mapAd(row: Record<string, unknown>): MetaAd { const bodyParts = [...strings(row.ad_creative_bodies), ...strings(row.ad_creative_link_descriptions), ...strings(row.ad_creative_link_captions)]; const euReach = reach(row.eu_total_reach); return { id: String(row.id), pageId: typeof row.page_id === "string" ? row.page_id : null, pageName: typeof row.page_name === "string" ? row.page_name : null, creationTime: date(row.ad_creation_time), headline: first(row.ad_creative_link_titles), body: bodyParts.length ? [...new Set(bodyParts)].join("\n") : null, platform: strings(row.publisher_platforms).join(", ") || null, firstShown: date(row.ad_delivery_start_time), lastShown: date(row.ad_delivery_stop_time), snapshotUrl: publicMetaSnapshot(row.ad_snapshot_url), reachLower: euReach.lower, reachUpper: euReach.upper, languages: strings(row.languages) }; }
 function requestUrl(pageIds: string[] = [], countryCode = "HR", startDate?: string, endDate?: string) { const { token, version } = config(); const url = new URL(`https://graph.facebook.com/${version}/ads_archive`); url.searchParams.set("access_token", token); url.searchParams.set("ad_type", "ALL"); url.searchParams.set("ad_reached_countries", JSON.stringify([countryCode.toUpperCase()])); url.searchParams.set("ad_active_status", "ALL"); url.searchParams.set("fields", "id,page_id,page_name,ad_creation_time,ad_creative_bodies,ad_creative_link_captions,ad_creative_link_descriptions,ad_creative_link_titles,ad_delivery_start_time,ad_delivery_stop_time,ad_snapshot_url,publisher_platforms,languages,eu_total_reach"); url.searchParams.set("limit", "100"); if (pageIds.length) url.searchParams.set("search_page_ids", JSON.stringify(pageIds)); if (startDate) url.searchParams.set("ad_delivery_date_min", startDate); if (endDate) url.searchParams.set("ad_delivery_date_max", endDate); return url; }
-export async function testMetaConnection() { await graph(requestUrl()); return true; }
-export async function fetchMetaAds(pageIds: string[], countryCode: string, startDate: string, endDate: string) { if (!pageIds.length) return []; let url: URL | null = requestUrl(pageIds, countryCode, startDate, endDate), result: MetaAd[] = []; const visited = new Set<string>(); while (url && !visited.has(url.toString())) { visited.add(url.toString()); const page = await graph(url); result = result.concat((page.data ?? []).map(mapAd)); url = page.paging?.next ? new URL(page.paging.next) : null; } return result; }
+export async function testMetaConnection() {
+  const url = requestUrl();
+  // ads_archive requires a search term or page IDs, even for a connection check.
+  url.searchParams.set("search_terms", "car");
+  url.searchParams.set("limit", "1");
+  await graph(url);
+  return true;
+}
+export async function fetchMetaAds(pageIds: string[], countryCode: string, startDate: string, endDate: string) { if (!pageIds.length) return []; if (pageIds.length > 10) throw new Error("Meta Ad Library supports up to 10 Page IDs per request. Reduce the Page IDs saved for this brand."); let url: URL | null = requestUrl(pageIds, countryCode, startDate, endDate), result: MetaAd[] = []; const visited = new Set<string>(); while (url && !visited.has(url.toString())) { visited.add(url.toString()); const page = await graph(url); result = result.concat((page.data ?? []).map(mapAd)); url = page.paging?.next ? new URL(page.paging.next) : null; } return result; }

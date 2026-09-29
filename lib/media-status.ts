@@ -8,7 +8,7 @@ async function warningFor(brandReportId: string, source: AdSource) {
   ]);
   const warnings = [
     failedDownloads ? `${failedDownloads} media download${failedDownloads === 1 ? "" : "s"} failed` : "",
-    missingMedia ? `${missingMedia} ad${missingMedia === 1 ? "" : "s"} did not include a downloadable image or thumbnail` : "",
+    missingMedia ? `${missingMedia} ad${missingMedia === 1 ? "" : "s"} need a screenshot; open the creative and upload one or retry capture` : "",
   ].filter(Boolean);
   return warnings.length ? `${source === "GOOGLE" ? "Google" : "Meta"}: ${warnings.join("; ")}.` : null;
 }

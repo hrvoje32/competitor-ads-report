@@ -1,3 +1,4 @@
+import { previousProviders, providerLabel } from "@/lib/ad-providers/selection";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
@@ -74,7 +75,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
       <p className="text-sm text-slate-500">Changing language clears existing analysis so each brand can be regenerated in the selected language.</p>
     </form>
     <ReportMediaControls reportId={report.id} language={report.language} summary={mediaSummary} available={cleanupAvailable}/>
-    <ReportActions reportId={id} blocked={exportBlocked} processing={automationInProgress} warnings={warnings} hasFailures={hasFailures}/>
+    <ReportActions reportId={id} blocked={exportBlocked} processing={automationInProgress} warnings={warnings} hasFailures={hasFailures} initialProviders={previousProviders(report.brandReports.flatMap(brand => brand.providerRuns).sort((a, b) => (b.startedAt?.getTime() ?? 0) - (a.startedAt?.getTime() ?? 0)))}/>
     {report.brandReports.length ? <div className="grid gap-4">
       {report.brandReports.map(brandReport => {
         const google = brandReport.adEvidence.filter(item => item.source === "GOOGLE");
@@ -87,10 +88,10 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         const metaRun = brandReport.providerRuns.find(run => run.source === "META");
         const errors = [brandReport.googleError, brandReport.metaError, brandReport.googleMediaError, brandReport.metaMediaError, brandReport.automationError].filter((value): value is string => Boolean(value));
         const sourceSummary = (label: string, status: StatusValue, count: number, selected: number, run?: typeof googleRun) => {
-          if (status === "FETCHING") return `${label}: Fetching through Apify…`;
+          if (status === "FETCHING") return `${label}: Fetching through ${providerLabel(label.toUpperCase(), run?.provider ?? "APIFY")}…`;
           if (status === "CAPTURING") return `${label}: ${run?.itemCount ?? count} ads collected · storing media…`;
           if (status === "FAILED") return `${label}: Source failed`;
-          return `${label}: ${run?.itemCount ?? count} ads collected · ${selected} representatives selected`;
+          return `${label} (${providerLabel(label.toUpperCase(), run?.provider ?? "APIFY")}): ${run?.itemCount ?? count} ads collected · ${selected} representatives selected`;
         };
 
         return <article key={brandReport.id} className="card p-5">
@@ -115,7 +116,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           {errors.length > 0 && <ul className="mt-3 list-disc rounded-md bg-rose-50 p-3 pl-8 text-sm text-rose-800">{[...new Set(errors)].map(error => <li key={error}>{error}</li>)}</ul>}
           <div className="mt-4 flex flex-wrap justify-end gap-2">
             <Link className="button button-secondary shrink-0" href={`/reports/${id}/brands/${brandReport.id}`}>Review Brand Report</Link>
-            <BrandAutomationButton reportId={id} brandReportId={brandReport.id}/>
+            <BrandAutomationButton reportId={id} brandReportId={brandReport.id} initialProviders={previousProviders(brandReport.providerRuns)} processing={automationInProgress}/>
           </div>
         </article>;
       })}

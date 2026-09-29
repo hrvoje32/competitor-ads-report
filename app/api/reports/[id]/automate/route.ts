@@ -1,3 +1,4 @@
+import { automationRequestSchema } from "@/lib/ad-providers/selection";
 import { NextRequest } from "next/server";
 import { POST as generateAnalysis } from "@/app/api/brand-reports/[brandReportId]/generate-analysis/route";
 import { prisma } from "@/lib/prisma";
@@ -12,8 +13,6 @@ import {
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
-
-type RequestBody = { brandReportId?: string; retryFailed?: boolean };
 
 async function finishBrand(brandReportId: string) {
   try {
@@ -48,7 +47,7 @@ async function reportSnapshot(reportId: string) {
       metaError: true,
       googleMediaError: true,
       metaMediaError: true,
-      providerRuns: { select: { source: true, status: true, runId: true, itemCount: true, mediaStoredCount: true, error: true } },
+      providerRuns: { select: { provider: true, source: true, status: true, runId: true, itemCount: true, mediaStoredCount: true, error: true } },
     },
   });
   const done = brands.every(brand => !["FETCHING", "CAPTURING", "ANALYSING"].includes(brand.automationStatus));
@@ -57,7 +56,11 @@ async function reportSnapshot(reportId: string) {
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const body = await request.json().catch(() => ({})) as RequestBody;
+  const parsed = automationRequestSchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return Response.json({ error: "Invalid collection settings." }, { status: 400 });
+  const body = parsed.data;
+  const report = await prisma.report.findUnique({ where: { id }, select: { id: true } });
+  if (!report) return Response.json({ error: "Report not found." }, { status: 404 });
   const brandReports = await prisma.brandReport.findMany({
     where: {
       reportId: id,
@@ -72,13 +75,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       } : {}),
     },
     orderBy: { brand: { sortOrder: "asc" } },
-    select: { id: true },
+    select: { id: true, automationStatus: true },
   });
   if (body.brandReportId && !brandReports.length) return Response.json({ error: "Brand report not found." }, { status: 404 });
+  if (brandReports.some(brand => ["FETCHING", "CAPTURING", "ANALYSING"].includes(brand.automationStatus))) {
+    return Response.json({ error: "Collection is already running. Wait for it to finish before changing sources." }, { status: 409 });
+  }
   const results = [];
   for (const brandReport of brandReports) {
     try {
-      results.push(await startBrandAutomation(brandReport.id, { failedOnly: Boolean(body.retryFailed) }));
+      results.push(await startBrandAutomation(brandReport.id, { failedOnly: Boolean(body.retryFailed), providers: body.providers }));
     } catch (error) {
       results.push({ brandReportId: brandReport.id, error: error instanceof Error ? error.message : "Unable to start automation." });
     }

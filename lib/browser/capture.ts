@@ -24,7 +24,7 @@ async function routeSafely(page: Page) {
   });
 }
 
-async function processedScreenshot(page: Page, source: CreativeCaptureRequest["source"]) {
+async function processedScreenshot(page: Page, source: CreativeCaptureRequest["source"], requireCreative = false) {
   let screenshot: Buffer | undefined;
   for (const selector of selectors[source]) {
     const locator = page.locator(selector);
@@ -33,6 +33,7 @@ async function processedScreenshot(page: Page, source: CreativeCaptureRequest["s
       break;
     }
   }
+  if (!screenshot && requireCreative) throw new Error("Could not identify the ad creative for automatic capture.");
   screenshot ??= await page.screenshot({ type: "png", fullPage: false, timeout: 10_000 });
   return sharp(screenshot)
     .flatten({ background: "#ffffff" })
@@ -55,7 +56,7 @@ export async function captureWithBrowser(browser: Browser, request: CreativeCapt
     if (["captcha", "verify you are human", "access denied", "login required"].some(marker => visibleText.includes(marker))) {
       throw new Error("Creative capture blocked by the source platform.");
     }
-    const output = await processedScreenshot(page, request.source);
+    const output = await processedScreenshot(page, request.source, request.requireCreative);
     if (output.length < 1_000) throw new Error("Creative capture returned an empty image.");
     return output;
   } finally {

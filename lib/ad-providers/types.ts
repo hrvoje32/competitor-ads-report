@@ -18,12 +18,15 @@ export type NormalizedAd = {
   videoThumbnailUrls: string[];
   platform?: string;
   format?: string;
+  reachLower?: number;
+  reachUpper?: number;
   rawData?: Record<string, unknown>;
 };
 
 export type CollectionRequest = {
   brandName: string;
   googleDomain?: string | null;
+  googleAdvertiserIds?: string[];
   metaPageIds: string[];
   countryCode: string;
   startDate: string;

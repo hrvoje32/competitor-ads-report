@@ -8,6 +8,7 @@ const serverSchema = z.object({
   META_ACCESS_TOKEN: optional, META_GRAPH_API_VERSION: optional, GCP_PROJECT_ID: optional,
   GCP_PROJECT_NUMBER: optional, GCP_SERVICE_ACCOUNT_EMAIL: optional, GCP_WORKLOAD_IDENTITY_POOL_ID: optional,
   GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID: optional,
+  BIGQUERY_MAX_BYTES_BILLED: z.string().regex(/^[1-9]\d*$/).default("10737418240"),
 });
 export const env = serverSchema.parse(process.env);
 export function openAIModel() {

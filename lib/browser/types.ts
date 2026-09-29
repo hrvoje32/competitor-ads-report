@@ -3,6 +3,7 @@ export type CreativeSource = "GOOGLE" | "META";
 export type CreativeCaptureRequest = {
   source: CreativeSource;
   url: string;
+  requireCreative?: boolean;
 };
 
 export interface CreativeBrowser {

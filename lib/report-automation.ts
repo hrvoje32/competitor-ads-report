@@ -2,29 +2,38 @@ import crypto from "node:crypto";
 import type { AdEvidence, AdProviderRun, Prisma } from "@prisma/client";
 import sharp from "sharp";
 import { apifyError, getApifyDatasetItems, getApifyRun, startApifyActor } from "@/lib/ad-providers/apify";
+import { collectGoogleOfficial } from "@/lib/ad-providers/google/official";
+import { collectMetaOfficial } from "@/lib/ad-providers/meta/official";
+import { previousProviders, type ProviderSelection } from "@/lib/ad-providers/selection";
+import { capturePublicPage } from "@/lib/automatic-capture";
 import { googleApifyProvider, normalizeGoogleApifyAd } from "@/lib/ad-providers/google/apify";
 import { metaApifyProvider, normalizeMetaApifyAd } from "@/lib/ad-providers/meta/apify";
 import type { AdProviderSource, CollectionRequest, NormalizedAd } from "@/lib/ad-providers/types";
 import { downloadAndProcessImage, googleTextEvidenceCard, storeProviderImage } from "@/lib/ad-media";
 import { prisma } from "@/lib/prisma";
 import { deliveryOverlapsAnalysisPeriod, isoReportDate } from "@/lib/report-period";
-import { deleteFile, downloadFile } from "@/lib/storage";
+import { downloadFile } from "@/lib/storage";
 import { MAX_REPRESENTATIVE_MEDIA_PER_SOURCE } from "@/lib/storage-policy";
 
 const MEDIA_BATCH_SIZE = 12;
+const OFFICIAL_CAPTURE_ATTEMPTS = 12;
 const TERMINAL_APIFY_STATUSES = new Set(["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"]);
 
 type LoadedBrandReport = Awaited<ReturnType<typeof loadBrandReport>>;
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Unknown automation error.";
+  let message = error instanceof Error ? error.message : "Unknown automation error.";
+  for (const token of [process.env.APIFY_TOKEN, process.env.META_ACCESS_TOKEN]) {
+    if (token) message = message.split(token).join("[redacted]").split(encodeURIComponent(token)).join("[redacted]");
+  }
+  return message;
 }
 
 async function loadBrandReport(brandReportId: string) {
   return prisma.brandReport.findUnique({
     where: { id: brandReportId },
     include: {
-      brand: { include: { metaPages: true } },
+      brand: { include: { metaPages: true, googleAdvertisers: true } },
       report: true,
       providerRuns: true,
     },
@@ -35,6 +44,7 @@ function collectionRequest(brandReport: NonNullable<LoadedBrandReport>): Collect
   return {
     brandName: brandReport.brand.name,
     googleDomain: brandReport.brand.googleDomain,
+    googleAdvertiserIds: brandReport.brand.googleAdvertisers.map(item => item.advertiserId),
     metaPageIds: brandReport.brand.metaPages.map(item => item.pageId),
     countryCode: brandReport.report.countryCode,
     startDate: isoReportDate(brandReport.report.startDate),
@@ -63,7 +73,22 @@ async function failProvider(brandReportId: string, source: AdProviderSource, mes
   ]);
 }
 
-async function startSource(brandReport: NonNullable<LoadedBrandReport>, source: AdProviderSource) {
+async function startSource(brandReport: NonNullable<LoadedBrandReport>, source: AdProviderSource, selection: ProviderSelection) {
+  if (selection[source] === "OFFICIAL") {
+    const actorId = source === "GOOGLE" ? "google-bigquery" : "meta-ad-library-api";
+    const data = {
+      provider: "OFFICIAL", actorId, inputJson: json({ ...collectionRequest(brandReport) }),
+      runId: null, datasetId: null, status: "RUNNING" as const, error: null,
+      itemCount: 0, mediaStoredCount: 0, itemsPersistedAt: null, processingStartedAt: null,
+      startedAt: new Date(), completedAt: null,
+    };
+    await prisma.adProviderRun.upsert({
+      where: { brandReportId_source: { brandReportId: brandReport.id, source } },
+      create: { brandReportId: brandReport.id, source, ...data }, update: data,
+    });
+    await prisma.brandReport.update({ where: { id: brandReport.id }, data: sourceStatusData(source, "FETCHING") });
+    return { source, started: true };
+  }
   let provider;
   try {
     provider = providerFor(source, collectionRequest(brandReport));
@@ -75,7 +100,7 @@ async function startSource(brandReport: NonNullable<LoadedBrandReport>, source: 
     await prisma.adProviderRun.upsert({
       where: { brandReportId_source: { brandReportId: brandReport.id, source } },
       create: { brandReportId: brandReport.id, source, actorId, status: "FAILED", error: message, completedAt: new Date() },
-      update: { actorId, runId: null, datasetId: null, status: "FAILED", error: message, completedAt: new Date(), itemsPersistedAt: null },
+      update: { provider: "APIFY", actorId, runId: null, datasetId: null, status: "FAILED", error: message, completedAt: new Date(), itemsPersistedAt: null },
     });
     await prisma.brandReport.update({ where: { id: brandReport.id }, data: sourceStatusData(source, "FAILED", message) });
     return { source, started: false, error: message };
@@ -106,17 +131,20 @@ async function startSource(brandReport: NonNullable<LoadedBrandReport>, source: 
   }
 }
 
-export async function startBrandAutomation(brandReportId: string, options: { failedOnly?: boolean } = {}) {
+export async function startBrandAutomation(brandReportId: string, options: { failedOnly?: boolean; providers?: ProviderSelection } = {}) {
   const brandReport = await loadBrandReport(brandReportId);
   if (!brandReport) throw new Error("Brand report not found.");
+  const providers = options.providers ?? previousProviders(brandReport.providerRuns);
   const failedSources = (["GOOGLE", "META"] as const).filter(source =>
     source === "GOOGLE" ? brandReport.googleStatus === "FAILED" : brandReport.metaStatus === "FAILED"
   );
   const sources = options.failedOnly ? failedSources : (["GOOGLE", "META"] as const);
-  await prisma.brandReport.update({
-    where: { id: brandReportId },
+  const claimed = await prisma.brandReport.updateMany({
+    where: { id: brandReportId, automationStatus: { notIn: ["FETCHING", "CAPTURING", "ANALYSING"] } },
     data: {
       automationStatus: sources.length ? "FETCHING" : "CAPTURING",
+      ...(sources.includes("GOOGLE") ? sourceStatusData("GOOGLE", "PENDING") : {}),
+      ...(sources.includes("META") ? sourceStatusData("META", "PENDING") : {}),
       automationError: null,
       googleMediaError: null,
       metaMediaError: null,
@@ -124,8 +152,9 @@ export async function startBrandAutomation(brandReportId: string, options: { fai
       automationEndedAt: null,
     },
   });
+  if (!claimed.count) throw new Error("Collection is already running for this brand. Wait for it to finish before switching sources.");
   await prisma.report.update({ where: { id: brandReport.reportId }, data: { mediaCleanedAt: null } });
-  const results = await Promise.all(sources.map(source => startSource(brandReport, source)));
+  const results = await Promise.all(sources.map(source => startSource(brandReport, source, providers)));
   return { brandReportId, results };
 }
 
@@ -137,7 +166,7 @@ function usefulRawData(item: NormalizedAd) {
   const raw = item.rawData ?? {};
   const fields = [
     "campaignId", "campaign_id", "adSetId", "adset_id", "groupId", "group_id",
-    "displayUrl", "display_url", "currency", "languages", "publisherPlatforms", "publisher_platforms",
+    "displayUrl", "display_url", "currency", "languages", "publisherPlatforms", "publisher_platforms", "topic", "fundedBy",
   ];
   const selected = Object.fromEntries(fields.filter(key => raw[key] !== undefined).map(key => [key, raw[key]]));
   return {
@@ -220,54 +249,42 @@ async function prepareEvidenceMetadata(brandReportId: string, source: AdProvider
   }));
 }
 
-async function removePreviousImportedEvidence(brandReportId: string, source: AdProviderSource) {
-  const evidence = await prisma.adEvidence.findMany({
-    where: { brandReportId, source, externalId: { not: null } },
-    include: { media: true },
-  });
-  const paths = evidence.flatMap(item => [item.localImagePath, ...item.media.map(media => media.storagePath)])
-    .filter((path): path is string => Boolean(path));
-  if (evidence.length) await prisma.adEvidence.deleteMany({ where: { id: { in: evidence.map(item => item.id) } } });
-  await Promise.allSettled([...new Set(paths)].map(path => deleteFile(path)));
-}
-
-async function persistNormalizedAds(brandReport: NonNullable<LoadedBrandReport>, run: AdProviderRun, rows: Record<string, unknown>[]) {
+async function persistNormalizedAds(brandReport: NonNullable<LoadedBrandReport>, run: AdProviderRun, items: NormalizedAd[]) {
   const request = collectionRequest(brandReport);
-  const normalize = run.source === "GOOGLE" ? normalizeGoogleApifyAd : normalizeMetaApifyAd;
-  const ads = rows.map(normalize).filter((item): item is NormalizedAd => Boolean(item))
-    .filter(item => dateOverlaps(item, request) && belongsToBrand(item, request))
+  const ads = items.filter(item => dateOverlaps(item, request) && belongsToBrand(item, request))
     .filter((item, index, all) => all.findIndex(candidate => candidate.externalId === item.externalId) === index);
 
-  await removePreviousImportedEvidence(brandReport.id, run.source);
+  // Merge by source ad ID. A failed/empty official response must never erase existing evidence.
   for (const [index, item] of ads.entries()) {
-    const evidence = await prisma.adEvidence.create({
-      data: {
-        brandReportId: brandReport.id,
-        source: item.source,
-        externalId: item.externalId,
-        sourceUrl: item.sourceUrl,
-        snapshotUrl: item.sourceUrl,
-        landingPageUrl: item.landingPageUrl,
-        headline: item.headline,
-        body: item.bodyText,
-        description: item.description,
-        cta: item.cta,
-        platform: item.platform,
-        format: item.format,
-        firstShown: item.startDate,
-        lastShown: item.endDate,
-        rawData: json(usefulRawData(item)),
-        notes: JSON.stringify({
-          importedFrom: "apify",
-          actorId: run.actorId,
-          advertiserId: item.advertiserId,
-          advertiserName: item.advertiserName,
-          videoUrls: item.videoUrls,
-        }),
-        sortOrder: index,
-        captureStatus: "PENDING",
+    const metadata = {
+      sourceUrl: item.sourceUrl,
+      snapshotUrl: item.sourceUrl,
+      landingPageUrl: item.landingPageUrl,
+      headline: item.headline,
+      body: item.bodyText,
+      description: item.description,
+      cta: item.cta,
+      platform: item.platform,
+      format: item.format,
+      firstShown: item.startDate,
+      lastShown: item.endDate,
+      reachLower: item.reachLower,
+      reachUpper: item.reachUpper,
+    };
+    const evidence = await prisma.adEvidence.upsert({
+      where: { brandReportId_source_externalId: { brandReportId: brandReport.id, source: item.source, externalId: item.externalId } },
+      create: {
+        brandReportId: brandReport.id, source: item.source, externalId: item.externalId,
+        ...metadata, rawData: json(usefulRawData(item)),
+        notes: JSON.stringify({ importedFrom: run.provider.toLowerCase(), actorId: run.actorId, advertiserId: item.advertiserId, advertiserName: item.advertiserName, videoUrls: item.videoUrls }),
+        sortOrder: index, captureStatus: "PENDING",
       },
+      update: metadata,
     });
+    if (!evidence.localImagePath) {
+      await prisma.adEvidence.update({ where: { id: evidence.id }, data: { captureStatus: "PENDING", captureError: null } });
+      await prisma.adMedia.updateMany({ where: { adEvidenceId: evidence.id, status: { in: ["FAILED", "DISCARDED"] } }, data: { status: "PENDING", error: null } });
+    }
     const candidates = mediaCandidates(item);
     if (candidates.length) {
       await prisma.adMedia.createMany({
@@ -281,14 +298,72 @@ async function persistNormalizedAds(brandReport: NonNullable<LoadedBrandReport>,
       });
     }
   }
+  await prepareEvidenceMetadata(brandReport.id, run.source);
   await prisma.adProviderRun.update({
     where: { id: run.id },
-    data: { itemCount: ads.length, itemsPersistedAt: new Date(), processingStartedAt: new Date() },
+    data: { itemCount: ads.length, itemsPersistedAt: new Date(), processingStartedAt: null },
   });
-  await prepareEvidenceMetadata(brandReport.id, run.source);
+}
+
+async function processOfficialMediaBatch(brandReport: NonNullable<LoadedBrandReport>, run: AdProviderRun) {
+  const claimed = await prisma.adProviderRun.updateMany({
+    where: { id: run.id, status: "PROCESSING", itemsPersistedAt: { not: null }, OR: [
+      { processingStartedAt: null },
+      { processingStartedAt: { lt: new Date(Date.now() - 5 * 60_000) } },
+    ] },
+    data: { processingStartedAt: new Date() },
+  });
+  if (!claimed.count) return;
+  try {
+    await captureOfficialMedia(brandReport, run);
+  } finally {
+    await prisma.adProviderRun.update({ where: { id: run.id }, data: { processingStartedAt: null } });
+  }
+}
+
+async function captureOfficialMedia(brandReport: NonNullable<LoadedBrandReport>, run: AdProviderRun) {
+  const where = { brandReportId: brandReport.id, source: run.source };
+  await prisma.adEvidence.updateMany({
+    where: { ...where, captureStatus: "CAPTURING", updatedAt: { lt: new Date(Date.now() - 5 * 60_000) } },
+    data: { captureStatus: "CAPTURE_FAILED", captureError: "Screenshot capture timed out. Try Automatic Capture or upload a screenshot." },
+  });
+  const failures = await prisma.adEvidence.count({ where: { ...where, captureStatus: "CAPTURE_FAILED" } });
+  if (failures >= OFFICIAL_CAPTURE_ATTEMPTS || (process.env.VERCEL && !process.env.BROWSER_WS_ENDPOINT)) {
+    await prisma.adEvidence.updateMany({ where: { ...where, localImagePath: null, captureStatus: "PENDING" }, data: {
+      captureStatus: "CAPTURE_FAILED", captureError: "Automatic capture unavailable or attempt limit reached. Upload a screenshot or switch this source to Apify.",
+    } });
+    return;
+  }
+  const stored = await prisma.adEvidence.count({ where: { ...where, localImagePath: { not: null } } });
+  if (stored >= MAX_REPRESENTATIVE_MEDIA_PER_SOURCE) return;
+  // One capture per source per poll keeps requests bounded and lets progress remain visible.
+  // Serialize captures for a source so overlapping polls cannot exceed the storage limit.
+  if (await prisma.adEvidence.count({ where: { ...where, captureStatus: "CAPTURING" } })) return;
+  const evidence = await prisma.adEvidence.findFirst({
+    where: { ...where, localImagePath: null, captureStatus: "PENDING" },
+    orderBy: [{ representativeScore: "desc" }, { sortOrder: "asc" }],
+  });
+  if (!evidence) return;
+  const claimed = await prisma.adEvidence.updateMany({ where: { id: evidence.id, captureStatus: "PENDING" }, data: { captureStatus: "CAPTURING" } });
+  if (!claimed.count) return;
+  try {
+    const url = evidence.snapshotUrl || evidence.sourceUrl;
+    if (!url) throw new Error("No creative link was returned.");
+    const output = await capturePublicPage(url, run.source, true);
+    const storedImage = await storeProviderImage(output, brandReport.report, brandReport.brandId, run.source, evidence.externalId || evidence.id);
+    await prisma.adEvidence.update({ where: { id: evidence.id }, data: {
+      localImagePath: storedImage.path, storedMediaBytes: storedImage.byteSize,
+      selectedForSlide: true, captureStatus: "READY", captureError: null,
+    } });
+  } catch (error) {
+    await prisma.adEvidence.update({ where: { id: evidence.id }, data: {
+      captureStatus: "CAPTURE_FAILED", captureError: `${errorMessage(error)} Open the creative and upload a screenshot, or switch this source to Apify.`,
+    } });
+  }
 }
 
 async function processMediaBatch(brandReport: NonNullable<LoadedBrandReport>, run: AdProviderRun) {
+  if (run.provider === "OFFICIAL") return processOfficialMediaBatch(brandReport, run);
   const stale = new Date(Date.now() - 5 * 60_000);
   await prisma.adMedia.updateMany({
     where: { status: "DOWNLOADING", updatedAt: { lt: stale }, adEvidence: { brandReportId: brandReport.id, source: run.source } },
@@ -440,7 +515,13 @@ async function finishProviderIfReady(brandReport: NonNullable<LoadedBrandReport>
   const pendingMedia = await prisma.adMedia.count({
     where: { status: { in: ["PENDING", "DOWNLOADING"] }, adEvidence: { brandReportId: brandReport.id, source: run.source } },
   });
-  if (pendingMedia) return;
+  if (run.provider === "OFFICIAL") {
+    const where = { brandReportId: brandReport.id, source: run.source };
+    const capturing = await prisma.adEvidence.count({ where: { ...where, captureStatus: "CAPTURING" } });
+    if (capturing) return;
+    const images = await prisma.adEvidence.count({ where: { ...where, localImagePath: { not: null } } });
+    if (images < MAX_REPRESENTATIVE_MEDIA_PER_SOURCE && await prisma.adEvidence.count({ where: { ...where, localImagePath: null, captureStatus: "PENDING" } })) return;
+  } else if (pendingMedia) return;
   const [stored, failedDownloads, missingMedia] = await Promise.all([
     prisma.adEvidence.count({ where: { brandReportId: brandReport.id, source: run.source, selectedForSlide: true, localImagePath: { not: null } } }),
     prisma.adMedia.count({ where: { status: "FAILED", adEvidence: { brandReportId: brandReport.id, source: run.source } } }),
@@ -449,7 +530,7 @@ async function finishProviderIfReady(brandReport: NonNullable<LoadedBrandReport>
   const label = run.source === "GOOGLE" ? "Google" : "Meta";
   const warnings = [
     failedDownloads ? `${failedDownloads} media download${failedDownloads === 1 ? "" : "s"} failed` : "",
-    missingMedia ? `${missingMedia} ad${missingMedia === 1 ? "" : "s"} did not include a downloadable image or thumbnail` : "",
+    missingMedia ? `${missingMedia} ad${missingMedia === 1 ? "" : "s"} need a screenshot; open the creative and upload one or retry capture` : "",
   ].filter(Boolean);
   const warning = warnings.length ? `${label}: ${warnings.join("; ")}.` : null;
   await prisma.$transaction([
@@ -466,6 +547,28 @@ async function finishProviderIfReady(brandReport: NonNullable<LoadedBrandReport>
 
 async function advanceProviderRun(brandReport: NonNullable<LoadedBrandReport>, initial: AdProviderRun) {
   let run = initial;
+  if (run.provider === "OFFICIAL" && !run.itemsPersistedAt) {
+    if (!["RUNNING", "PROCESSING"].includes(run.status)) return;
+    const claimed = await prisma.adProviderRun.updateMany({
+      where: { id: run.id, itemsPersistedAt: null, OR: [
+        { status: "RUNNING" },
+        { status: "PROCESSING", processingStartedAt: { lt: new Date(Date.now() - 5 * 60_000) } },
+      ] },
+      data: { status: "PROCESSING", processingStartedAt: new Date() },
+    });
+    if (!claimed.count) return;
+    try {
+      const request = collectionRequest(brandReport);
+      const items = run.source === "GOOGLE"
+        ? await collectGoogleOfficial(request.googleAdvertiserIds ?? [], request.countryCode, request.startDate, request.endDate)
+        : await collectMetaOfficial(request.metaPageIds, request.countryCode, request.startDate, request.endDate);
+      await prisma.brandReport.update({ where: { id: brandReport.id }, data: sourceStatusData(run.source, "CAPTURING") });
+      await persistNormalizedAds(brandReport, run, items);
+      run = await prisma.adProviderRun.findUniqueOrThrow({ where: { id: run.id } });
+    } catch (error) {
+      return failProvider(brandReport.id, run.source, errorMessage(error));
+    }
+  }
   if (run.status === "RUNNING") {
     if (!run.runId) return failProvider(brandReport.id, run.source, "Apify run ID is missing.");
     try {
@@ -487,7 +590,8 @@ async function advanceProviderRun(brandReport: NonNullable<LoadedBrandReport>, i
     if (!run.itemsPersistedAt) {
       if (!run.datasetId) throw new Error("Apify dataset ID is missing.");
       const rows = await getApifyDatasetItems(run.datasetId);
-      await persistNormalizedAds(brandReport, run, rows);
+      const normalize = run.source === "GOOGLE" ? normalizeGoogleApifyAd : normalizeMetaApifyAd;
+      await persistNormalizedAds(brandReport, run, rows.map(normalize).filter((item): item is NormalizedAd => Boolean(item)));
       run = await prisma.adProviderRun.findUniqueOrThrow({ where: { id: run.id } });
     }
     await processMediaBatch(brandReport, run);
@@ -500,6 +604,10 @@ async function advanceProviderRun(brandReport: NonNullable<LoadedBrandReport>, i
 export async function advanceBrandCollection(brandReportId: string) {
   let brandReport = await loadBrandReport(brandReportId);
   if (!brandReport) throw new Error("Brand report not found.");
+  // A poll arriving while POST initializes the runs must not finish last run's analysis.
+  if (brandReport.googleStatus === "PENDING" || brandReport.metaStatus === "PENDING") {
+    return { readyForAnalysis: false, done: false };
+  }
   await Promise.all(brandReport.providerRuns.map(run => advanceProviderRun(brandReport!, run)));
   brandReport = await loadBrandReport(brandReportId);
   if (!brandReport) throw new Error("Brand report not found.");
@@ -616,29 +724,6 @@ export async function groupAndSelectEvidence(brandReportId: string) {
   }
   if (slideRepresentatives.length) await prisma.adEvidence.updateMany({ where: { id: { in: slideRepresentatives.map(item => item.item.id) } }, data: { selectedForSlide: true } });
   if (analysis.length) await prisma.adEvidence.updateMany({ where: { id: { in: analysis.map(item => item.item.id) } }, data: { selectedForAnalysisEvidence: true } });
-  const selectedIds = new Set(slideRepresentatives.map(item => item.item.id));
-  const selectedPaths = new Set(slideRepresentatives.map(item => item.item.localImagePath).filter((path): path is string => Boolean(path)));
-  const unused = await prisma.adEvidence.findMany({
-    where: { brandReportId, externalId: { not: null }, localImagePath: { not: null }, id: { notIn: [...selectedIds] } },
-    include: { media: true },
-  });
-  for (const item of unused) {
-    const paths = [...new Set([item.localImagePath, ...item.media.map(media => media.storagePath)]
-      .filter((path): path is string => typeof path === "string" && !selectedPaths.has(path)))];
-    const deletion = await Promise.allSettled(paths.map(path => deleteFile(path)));
-    const deleted = paths.filter((_, index) => deletion[index].status === "fulfilled");
-    if (!deleted.length) continue;
-    await prisma.$transaction([
-      prisma.adEvidence.update({
-        where: { id: item.id },
-        data: { localImagePath: null, storedMediaBytes: null, captureStatus: "PENDING", captureError: null },
-      }),
-      prisma.adMedia.updateMany({
-        where: { adEvidenceId: item.id, storagePath: { in: deleted } },
-        data: { storagePath: null, byteSize: null, status: "DISCARDED", error: "Removed after final representative selection." },
-      }),
-    ]);
-  }
   await Promise.all([
     prisma.adProviderRun.updateMany({ where: { brandReportId, source: "GOOGLE" }, data: { mediaStoredCount: google.length } }),
     prisma.adProviderRun.updateMany({ where: { brandReportId, source: "META" }, data: { mediaStoredCount: meta.length } }),

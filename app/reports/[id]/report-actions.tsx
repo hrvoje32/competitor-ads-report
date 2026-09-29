@@ -2,13 +2,17 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { ProviderSelection } from "@/lib/ad-providers/selection";
+import ProviderFields from "./provider-fields";
 import ExportControls from "./export-controls";
 import DeleteReportButton from "../delete-report-button";
 
 const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds));
 
-export default function ReportActions({ reportId, blocked, processing, warnings, hasFailures }: { reportId: string; blocked: boolean; processing: boolean; warnings: string[]; hasFailures: boolean }) {
+export default function ReportActions({ reportId, blocked, processing, warnings, hasFailures, initialProviders }: { reportId: string; blocked: boolean; processing: boolean; warnings: string[]; hasFailures: boolean; initialProviders: ProviderSelection }) {
   const router = useRouter();
+  const [chosenProviders, setProviders] = useState<ProviderSelection | null>(null);
+  const providers = chosenProviders ?? initialProviders;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
@@ -45,7 +49,7 @@ export default function ReportActions({ reportId, blocked, processing, warnings,
       const response = await fetch(`/api/reports/${reportId}/automate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ retryFailed }),
+        body: JSON.stringify({ retryFailed, providers }),
       });
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error || "Unable to start automated analysis.");
@@ -60,6 +64,7 @@ export default function ReportActions({ reportId, blocked, processing, warnings,
   };
 
   return <div className="card mb-6 grid gap-4 p-4">
+    <ProviderFields value={providers} onChange={setProviders} disabled={pending || processing}/>
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="flex flex-wrap gap-2">
         <button className="button" disabled={pending || processing} onClick={() => run(false)}>{pending || processing ? "Automated analysis running…" : "Run Automated Analysis"}</button>
