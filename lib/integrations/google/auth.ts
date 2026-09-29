@@ -10,7 +10,7 @@ export function googleAuthClient() {
     subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
     token_url: "https://sts.googleapis.com/v1/token",
     service_account_impersonation_url: "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/" + env.GCP_SERVICE_ACCOUNT_EMAIL + ":generateAccessToken",
-    subject_token_supplier: { getSubjectToken: getVercelOidcToken },
+    subject_token_supplier: { getSubjectToken: () => getVercelOidcToken() },
   });
   if (!client) throw new Error("Google integration is unavailable: unable to create the federation client.");
   return client;
