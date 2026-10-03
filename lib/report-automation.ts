@@ -349,11 +349,11 @@ async function captureOfficialMedia(brandReport: NonNullable<LoadedBrandReport>,
   try {
     const url = evidence.snapshotUrl || evidence.sourceUrl;
     if (!url) throw new Error("No creative link was returned.");
-    const output = await capturePublicPage(url, run.source, true);
-    const storedImage = await storeProviderImage(output, brandReport.report, brandReport.brandId, run.source, evidence.externalId || evidence.id);
+    const capture = await capturePublicPage(url, run.source);
+    const storedImage = await storeProviderImage(capture.image, brandReport.report, brandReport.brandId, run.source, evidence.externalId || evidence.id, capture.contentType);
     await prisma.adEvidence.update({ where: { id: evidence.id }, data: {
       localImagePath: storedImage.path, storedMediaBytes: storedImage.byteSize,
-      selectedForSlide: true, captureStatus: "READY", captureError: null,
+      selectedForSlide: true, captureStatus: "READY", captureError: null, captureMethod: capture.method,
     } });
   } catch (error) {
     await prisma.adEvidence.update({ where: { id: evidence.id }, data: {

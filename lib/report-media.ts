@@ -102,6 +102,7 @@ export async function cleanupReportMedia(reportId: string) {
       where: { brandReport: { reportId }, localImagePath: { in: deleted } },
       data: {
         localImagePath: null,
+        captureMethod: null,
         storedMediaBytes: null,
         cropX: null,
         cropY: null,

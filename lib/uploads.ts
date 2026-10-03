@@ -35,9 +35,11 @@ export async function saveEvidenceImage(file: File, report: { id: string }, bran
   return (await saveEvidenceImageDetails(file, report, brandId, source)).path;
 }
 
-export async function saveEvidenceBufferDetails(buffer: Buffer, report: { id: string }, brandId: string, source: "google" | "meta") {
-  const output = await optimizeEvidenceImage(buffer);
-  const path = await saveFile({ path: evidenceObjectPath(report.id, brandId, source), contentType: "image/webp" }, output);
+export async function saveEvidenceBufferDetails(buffer: Buffer, report: { id: string }, brandId: string, source: "google" | "meta", capturedContentType?: "image/webp" | "image/png") {
+  // Browser captures are already processed; preserve their PNG when optimization was unavailable.
+  const output = capturedContentType ? buffer : await optimizeEvidenceImage(buffer);
+  const contentType = capturedContentType ?? "image/webp";
+  const path = await saveFile({ path: evidenceObjectPath(report.id, brandId, source, contentType === "image/png" ? "png" : "webp"), contentType }, output);
   return { path, byteSize: output.length };
 }
 

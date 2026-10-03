@@ -132,8 +132,8 @@ export async function googleTextEvidenceCard(input: { headline?: string | null; 
   return sharp(Buffer.from(svg)).webp({ quality: 88 }).toBuffer();
 }
 
-export async function storeProviderImage(buffer: Buffer, report: { id: string }, brandId: string, source: "GOOGLE" | "META", externalId: string) {
-  const path = providerMediaObjectPath(report.id, brandId, source.toLowerCase() as "google" | "meta", externalId);
-  await saveFile({ path, contentType: "image/webp", upsert: true }, buffer);
+export async function storeProviderImage(buffer: Buffer, report: { id: string }, brandId: string, source: "GOOGLE" | "META", externalId: string, contentType: "image/webp" | "image/png" = "image/webp") {
+  const path = providerMediaObjectPath(report.id, brandId, source.toLowerCase() as "google" | "meta", externalId, contentType === "image/png" ? "png" : "webp");
+  await saveFile({ path, contentType, upsert: true }, buffer);
   return { path, byteSize: buffer.length };
 }

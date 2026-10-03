@@ -187,6 +187,7 @@ model AdEvidence {
   selectedForAnalysisEvidence Boolean       @default(false)
   captureStatus               CaptureStatus @default(PENDING)
   captureError                String?
+  captureMethod               String?
   perceptualHash              String?
   normalizedTextHash          String?
   duplicateGroupKey           String?
