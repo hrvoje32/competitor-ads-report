@@ -109,6 +109,8 @@ async function main() {
 
     await page.setContent("<h1>Verify you are human</h1>");
     await assert.rejects(captureLoadedPage(page, request), /blocked by the source platform/);
+    await page.setContent("<h1>This content isn't available right now</h1><p>The ad may have been deleted.</p>");
+    await assert.rejects(captureLoadedPage(page, { ...request, source: "META" }), /ad is unavailable/);
     await page.setContent("<body style='margin:0;background:white'></body>");
     assert.equal((await captureLoadedPage(page, request)).method, "PAGE_FALLBACK", "A low-byte blank image is still a valid screenshot");
 

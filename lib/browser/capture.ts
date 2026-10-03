@@ -4,6 +4,7 @@ import type { CaptureDiagnostics, CreativeCaptureRequest, CreativeCaptureResult 
 import { detectCreative, fallbackClip } from "@/lib/browser/detection";
 import { safeCaptureText, safeCaptureUrl } from "@/lib/browser/diagnostics";
 import { assertPublicHttpUrl } from "@/lib/browser/security";
+import { navigateCreativePage } from "@/lib/browser/navigation";
 
 async function routeSafely(page: Page) {
   await page.route("**/*", async route => {
@@ -28,6 +29,15 @@ export async function captureLoadedPage(page: Page, request: CreativeCaptureRequ
   const blocked = /verify (?:that )?you are human|access denied|login required|unusual traffic|security verification/i.test(`${title} ${visibleText}`)
     || (visibleText.length < 2_000 && /\bcaptcha\b/i.test(`${title} ${visibleText}`));
   if (blocked) throw new Error("Creative capture blocked by the source platform.");
+  // Facebook can return a successful HTTP response with an unavailable-content page.
+  // Do not save that page as fallback evidence after recovering an archive URL.
+  if (request.source === "META") {
+    const headings = await page.locator("h1, h2, [role='heading']").allTextContents().catch(() => []);
+    const unavailable = /(?:this )?(?:content|page) (?:isn't|is not|isn’t) available|page not found/i;
+    if (unavailable.test(`${title} ${headings.join(" ")}`) || (visibleText.length < 1_000 && unavailable.test(visibleText))) {
+      throw new Error("Meta Ad Library says this ad is unavailable. No error-page screenshot was saved.");
+    }
+  }
 
   // Only the separate, two-ad diagnostic command opts in. No automatic full-page captures.
   const diagnosticFullPage = request.diagnosticFullPage
@@ -86,8 +96,7 @@ export async function captureWithBrowser(browser: Browser, request: CreativeCapt
     context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, javaScriptEnabled: true, locale: "en-US" });
     const page = await context.newPage();
     await routeSafely(page);
-    const response = await page.goto(request.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    if (response && response.status() >= 400) throw new Error(`Creative navigation failed (HTTP ${response.status()}).`);
+    await navigateCreativePage(page, request);
     await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
     await page.waitForTimeout(1_500);
     return await captureLoadedPage(page, request);

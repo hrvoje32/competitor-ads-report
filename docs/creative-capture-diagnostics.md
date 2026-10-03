@@ -8,6 +8,12 @@ with edge navigation cropped when measurable. `captureStatus` is `READY` after
 storage succeeds; `captureMethod` distinguishes `CREATIVE` from `PAGE_FALLBACK`.
 The evidence card labels page fallbacks for review and manual cropping.
 
+If a Meta `/ads/archive/render_ad/` snapshot returns HTTP 404 or 410, capture
+tries `https://www.facebook.com/ads/library/?id=AD_ID` once for the same numeric
+Library ID. The alternate URL contains no token. Other HTTP errors remain hard
+failures, as do unavailable-content pages returned with HTTP 200. This recovery
+does not change Meta API collection or the stored source URLs.
+
 Apply the additive `20261004090000_add_capture_method` database migration before
 deploying this code, and generate the Prisma client as part of the build. Neither
 the migration nor a deployment is performed by the diagnostic command.
