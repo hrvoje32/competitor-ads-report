@@ -11,6 +11,6 @@ export async function collectGoogleOfficial(advertiserIds: string[], countryCode
     platform: "Google Ads", format: item.format ?? undefined,
     reachLower: item.reachLower ?? undefined, reachUpper: item.reachUpper ?? undefined,
     // Google's topic is a classification, not the actual ad headline.
-    rawData: { topic: item.topic, fundedBy: item.fundedBy },
+    rawData: { topic: item.topic, fundedBy: item.fundedBy, advertiser_disclosed_name: item.disclosedName, advertiser_legal_name: item.legalName, advertiser_location: item.location },
   }));
 }

@@ -66,6 +66,10 @@ model Brand {
   logoPath          String?
   websiteUrl        String?
   googleDomain      String?
+  adIncludeKeywords String[]                    @default([])
+  adExcludeKeywords String[]                    @default([])
+  adAllowedDomains  String[]                    @default([])
+  adExcludedDomains String[]                    @default([])
   countryCode       String                      @default("HR")
   sortOrder         Int                         @default(0)
   createdAt         DateTime                    @default(now())
@@ -140,6 +144,7 @@ model BrandReport {
   approved              Boolean          @default(false)
   analysisJson          String?
   analysisEditedJson    String?
+  analysisNeedsRegeneration Boolean       @default(false)
   automationStatus      AutomationStatus @default(PENDING)
   googleStatus          AutomationStatus @default(PENDING)
   metaStatus            AutomationStatus @default(PENDING)
@@ -158,6 +163,7 @@ model BrandReport {
   nextBrandReports      BrandReport[]    @relation("BrandReportPreviousMonth")
   adEvidence            AdEvidence[]
   providerRuns          AdProviderRun[]
+  officialCaptureStates OfficialCaptureState[]
 
   @@unique([reportId, brandId])
   @@index([previousBrandReportId])
@@ -188,6 +194,10 @@ model AdEvidence {
   captureStatus               CaptureStatus @default(PENDING)
   captureError                String?
   captureMethod               String?
+  brandFilterStatus           String        @default("INCLUDED")
+  brandFilterReason           String        @default("Included: no brand filters configured")
+  captureCandidateRank        Int?
+  officialCaptureAttemptedAt  DateTime?
   perceptualHash              String?
   normalizedTextHash          String?
   duplicateGroupKey           String?
@@ -208,6 +218,19 @@ model AdEvidence {
   @@unique([brandReportId, source, externalId])
   @@index([brandReportId, source, captureStatus])
   @@index([brandReportId, duplicateGroupKey])
+}
+
+// Lifetime budget per brand report/source; collection reruns never reset it.
+model OfficialCaptureState {
+  id            String      @id @default(cuid())
+  brandReportId String
+  source        AdSource
+  attempts      Int         @default(0)
+  leaseToken    String?
+  leaseStartedAt DateTime?
+  brandReport   BrandReport @relation(fields: [brandReportId], references: [id], onDelete: Cascade)
+
+  @@unique([brandReportId, source])
 }
 
 model AdProviderRun {

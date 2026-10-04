@@ -10,5 +10,6 @@ export async function collectMetaOfficial(pageIds: string[], countryCode: string
     startDate: item.firstShown ?? undefined, endDate: item.lastShown ?? undefined,
     imageUrls: [], videoUrls: [], videoThumbnailUrls: [], platform: item.platform ?? undefined,
     reachLower: item.reachLower ?? undefined, reachUpper: item.reachUpper ?? undefined,
+    rawData: { page_id: item.pageId, page_name: item.pageName },
   }));
 }

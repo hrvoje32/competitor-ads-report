@@ -19,6 +19,19 @@ export function BrandForm({ brand, action }: { brand?: ConfiguredBrand; action: 
       <label><span className="label">Website</span><input name="websiteUrl" type="url" defaultValue={v("websiteUrl") ?? ""} placeholder="https://" /></label>
       <label><span className="label">Google Domain</span><input name="googleDomain" defaultValue={v("googleDomain") ?? ""} placeholder="example.com" /><span className="mt-1 block text-xs text-slate-400">Example: peugeot.hr. Full website URLs are also accepted.</span></label>
       <AdSourceFields brandName={String(v("name") ?? "")} initialAdvertisers={brand?.googleAdvertisers ?? []} initialMetaPages={brand?.metaPages ?? []} />
+      <fieldset className="space-y-4 rounded-lg border border-slate-200 p-4 md:col-span-2">
+        <legend className="px-1 font-bold">Ad filtering</legend>
+        <p className="text-sm text-slate-600">Use these filters when one advertiser account contains ads for multiple brands or marques. Enter one value per line. Leave all fields empty to preserve existing matching behavior.</p>
+        <div className="grid gap-4 md:grid-cols-2">
+          {([
+            ["adIncludeKeywords", "Include keywords / aliases", "Peugeot\npeugeot.hr\npeugeot.com"],
+            ["adExcludeKeywords", "Exclude keywords", "Citroën\nFiat\nMercedes-Benz"],
+            ["adAllowedDomains", "Allowed domains", "peugeot.hr\npeugeot.com"],
+            ["adExcludedDomains", "Excluded domains", "citroen.hr\nfiat.hr"],
+          ] as const).map(([key, label, placeholder]) => <label key={key}><span className="label">{label}</span><textarea name={key} rows={4} maxLength={10000} defaultValue={brand?.[key]?.join("\n") ?? ""} placeholder={placeholder}/></label>)}
+        </div>
+        <p className="text-xs text-slate-500">With include aliases or allowed domains configured, ads need a positive metadata match. An agency advertiser ID alone is insufficient. Ads without matching metadata remain available under Excluded in the report.</p>
+      </fieldset>
       <label><span className="label">Country</span><input name="countryCode" maxLength={2} defaultValue={v("countryCode") ?? "HR"} required /></label>
       <label><span className="label">Sort order</span><input name="sortOrder" type="number" defaultValue={v("sortOrder") ?? 0} /></label>
     </div>

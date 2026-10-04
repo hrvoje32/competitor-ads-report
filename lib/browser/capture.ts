@@ -43,6 +43,7 @@ export async function captureLoadedPage(page: Page, request: CreativeCaptureRequ
   const title = await page.title().catch(() => "");
   const visibleText = await page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
   const blocked = /verify (?:that )?you are human|access denied|login required|unusual traffic|security verification/i.test(`${title} ${visibleText}`)
+    || /log (?:in|into) (?:to )?facebook|facebook.*log in/i.test(title)
     || (visibleText.length < 2_000 && /\bcaptcha\b/i.test(`${title} ${visibleText}`));
   if (blocked) throw new Error("Creative capture blocked by the source platform.");
   // Facebook can return a successful HTTP response with an unavailable-content page.
@@ -79,6 +80,18 @@ export async function captureLoadedPage(page: Page, request: CreativeCaptureRequ
     method = "PAGE_FALLBACK";
     diagnostics.reason = detection.candidates.length ? "Creative candidates could not be captured." : "No reliable creative candidate found.";
     console.warn("Creative capture using page fallback", JSON.stringify(diagnostics));
+    // A successful HTTP response can still be an empty shell or a redirect to a
+    // generic home page. Fallback is evidence only when the ad page rendered.
+    let adRoute = false;
+    try {
+      const url = new URL(page.url());
+      adRoute = request.source === "GOOGLE"
+        ? url.hostname === "adstransparency.google.com" && /\/creative\/CR\d+/.test(url.pathname)
+        : ["facebook.com", "www.facebook.com", "m.facebook.com", "web.facebook.com"].includes(url.hostname)
+          && /^\/ads\/(?:library|archive\/render_ad)\/?$/.test(url.pathname) && /^\d+$/.test(url.searchParams.get("id") || "");
+    } catch { /* Treat unknown destinations conservatively. */ }
+    const renderedAd = visibleText.trim().length > 0 && (adRoute || /\b(?:ad|advertisement|creative|sponsored|oglas)\b/i.test(`${title} ${visibleText}`));
+    if (!renderedAd) throw new Error("Creative navigation did not render an identifiable ad page.");
     // A failed element screenshot may have scrolled the page. Restore a predictable fallback.
     await page.evaluate(() => window.scrollTo(0, 0)).catch(() => undefined);
     const clip = await fallbackClip(page);

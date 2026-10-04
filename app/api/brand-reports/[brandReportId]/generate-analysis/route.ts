@@ -1,6 +1,8 @@
 import OpenAI from "openai";
 import sharp from "sharp";
 import { NextRequest } from "next/server";
+import { eligibleAnalysisEvidence } from "@/lib/brand-ad-filter";
+import { readableEvidence } from "@/lib/analysis-evidence";
 import { prisma } from "@/lib/prisma";
 import { analysisJsonSchema, analysisSchema, normalizeAnalysisResponse } from "@/lib/analysis";
 import { getCroppedImageBuffer } from "@/lib/uploads";
@@ -69,28 +71,6 @@ function firstRawValue(rawData: unknown, keys: string[]) {
     if (typeof value === "string" || typeof value === "number") return String(value);
   }
   return "—";
-}
-
-function previousAnalysisText(raw: string | null) {
-  if (!raw) return "No retained AI analysis.";
-  try {
-    const parsed = object(JSON.parse(raw));
-    const fields = ["keyThemes", "modelsPromoted", "offers", "googleFindings", "socialFindings", "changesVsPreviousMonth"];
-    const concise: Record<string, unknown> = Object.fromEntries(fields.flatMap(field => {
-      const value = parsed[field];
-      if (!Array.isArray(value)) return [];
-      return [[field, value.flatMap(item => {
-        const finding = object(item);
-        if (typeof finding.text !== "string") return [];
-        return [{ text: finding.text, ...(typeof finding.classification === "string" ? { classification: finding.classification } : {}) }];
-      })]];
-    }));
-    const conclusion = object(parsed.conclusion);
-    if (typeof conclusion.text === "string") concise.conclusion = conclusion.text;
-    return JSON.stringify(concise);
-  } catch {
-    return raw.slice(0, 6_000);
-  }
 }
 
 function comparisonEvidence(items: InputEvidence[]) {
@@ -165,7 +145,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     const current = await prisma.brandReport.findUnique({
       where: { id: brandReportId },
       include: {
-        brand: true,
+        brand: { include: { metaPages: true } },
         report: true,
         adEvidence: {
           where: selected,
@@ -174,9 +154,10 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       },
     });
     if (!current) return Response.json({ error: "Brand report not found." }, { status: 404 });
+    current.adEvidence = eligibleAnalysisEvidence(current.adEvidence, current.brand);
     if (!current.adEvidence.length) {
       return Response.json(
-        { error: "No evidence selected. Select Google or Social evidence before generating analysis." },
+        { error: "No usable included evidence selected. Select at least one matched ad with a stored screenshot before generating analysis." },
         { status: 400 },
       );
     }
@@ -213,28 +194,31 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       data: { previousBrandReportId: prior?.id ?? null },
     });
 
-    const currentEvidence = current.adEvidence as InputEvidence[];
+    const readableCurrent = await readableEvidence(current.adEvidence as InputEvidence[], item => imagePart(item, item.id));
+    const currentEvidence = readableCurrent.map(entry => entry.item);
+    if (!currentEvidence.length) return Response.json({ error: "No selected, brand-matched screenshots could be read from storage. Upload usable evidence before generating analysis." }, { status: 400 });
     const currentLabels = labels(currentEvidence);
-    const priorAllEvidence = (prior?.adEvidence ?? []) as InputEvidence[];
+    const readablePrior = await readableEvidence(eligibleAnalysisEvidence(prior?.adEvidence ?? [], current.brand) as InputEvidence[], item => imagePart(item, item.id));
+    const priorAllEvidence = readablePrior.map(entry => entry.item);
     const priorEvidence = comparisonEvidence(priorAllEvidence);
     const priorLabels = labels(priorEvidence, true);
     const languageInstructions = current.report.language === "HR"
       ? "Write ALL prose in natural, professional Croatian using correct Croatian characters (č, ć, ž, š, đ). Use appropriate automotive and marketing terminology. Preserve brand names, model names, campaign slogans, and evidence identifiers exactly; do not mechanically translate them."
       : "Write ALL prose in concise, professional English.";
-    const instructions = `You analyse only supplied competitor-advertising evidence for ${current.brand.name}. ${languageInstructions} Never make factual claims unless supported by supplied evidence. Every non-empty finding must cite one or more evidence identifiers such as [G1], [M1], [PG1], or [PM1]. In the JSON evidence arrays, return identifiers without brackets. Use G/M for current evidence and PG/PM for previous evidence. Each evidence array MUST contain no more than 8 unique evidence IDs. Use only evidence IDs supplied in this request. Prefer the smallest number of citations necessary to support the finding. The conclusion must use no more than 8 evidence references. Never infer spend, sales, ROI, reach, performance, campaign success, or a change in spend/performance unless actual supplied data directly measures it. Do not interpret duration as proof that an ad converts. Produce concise, PowerPoint-ready content. Each bullet should be one short sentence. Use at most 3 keyThemes, 4 modelsPromoted, 3 offers, 3 googleFindings, 3 socialFindings, and 3 changesVsPreviousMonth. The conclusion must contain at most 2 short sentences. Avoid repeating the same model, offer, or observation in multiple sections unless analytically necessary. Consider creative IDs, hashes, group counts, campaign/group classifications, offers, models, text, and current screenshots. Previous screenshots are intentionally unavailable and are never required. If no prior report is supplied, changesVsPreviousMonth MUST be []. If a prior report is supplied, each changesVsPreviousMonth item must set classification to exactly NEW, CONTINUING, NO LONGER OBSERVED, INCREASED PRESENCE, or DECREASED PRESENCE. Use INCREASED PRESENCE or DECREASED PRESENCE only when the supplied group counts or occurrence counts support that comparison. Support comparison findings with current and/or previous evidence identifiers appropriate to the claim; a NO LONGER OBSERVED finding can rely on previous evidence plus the supplied current-month set. Return empty arrays where the evidence does not support a finding.`;
+    const instructions = `You analyse only supplied competitor-advertising evidence for ${current.brand.name}. ${languageInstructions} Never make factual claims unless supported by supplied evidence. Every non-empty finding must cite one or more evidence identifiers such as [G1], [M1], [PG1], or [PM1]. In the JSON evidence arrays, return identifiers without brackets. Use G/M for current evidence and PG/PM for previous evidence. Each evidence array MUST contain no more than 8 unique evidence IDs. Use only evidence IDs supplied in this request. Prefer the smallest number of citations necessary to support the finding. The conclusion must use no more than 8 evidence references. Never infer spend, sales, ROI, reach, performance, campaign success, or a change in spend/performance unless actual supplied data directly measures it. Do not interpret duration as proof that an ad converts. Produce concise, PowerPoint-ready content. Each bullet should be one short sentence. Use at most 3 keyThemes, 4 modelsPromoted, 3 offers, 3 googleFindings, 3 socialFindings, and 3 changesVsPreviousMonth. The conclusion must contain at most 2 short sentences. Avoid repeating the same model, offer, or observation in multiple sections unless analytically necessary. Consider creative IDs, hashes, group counts, campaign/group classifications, offers, models, text, and current screenshots. Previous evidence is limited to selected, brand-matched records with retained screenshots. If no prior report is supplied, changesVsPreviousMonth MUST be []. If a prior report is supplied, each changesVsPreviousMonth item must set classification to exactly NEW, CONTINUING, NO LONGER OBSERVED, INCREASED PRESENCE, or DECREASED PRESENCE. Use INCREASED PRESENCE or DECREASED PRESENCE only when the supplied group counts or occurrence counts support that comparison. Support comparison findings with current and/or previous evidence identifiers appropriate to the claim; a NO LONGER OBSERVED finding can rely on previous evidence plus the supplied current-month set. Return empty arrays where the evidence does not support a finding.`;
     const content: Array<
       { type: "input_text"; text: string } |
       { type: "input_image"; image_url: string; detail: "high" }
     > = [{
       type: "input_text",
-      text: `${instructions}\n\nREPORT LANGUAGE: ${current.report.language}\nCURRENT REPORT: ${current.report.month}/${current.report.year}\nCURRENT EVIDENCE:\n${evidenceText(currentEvidence, currentLabels)}${prior ? `\n\nPREVIOUS REPORT: ${prior.report.month}/${prior.report.year}\nPREVIOUS RETAINED AI ANALYSIS:\n${previousAnalysisText(prior.analysisEditedJson || prior.analysisJson)}\n\nPREVIOUS RETAINED STRUCTURED DATA:\n${previousMetadataText(priorAllEvidence, priorEvidence, priorLabels)}` : "\n\nNO PREVIOUS COMPLETED REPORT IS AVAILABLE."}`,
+      text: `${instructions}\n\nREPORT LANGUAGE: ${current.report.language}\nCURRENT REPORT: ${current.report.month}/${current.report.year}\nCURRENT EVIDENCE:\n${evidenceText(currentEvidence, currentLabels)}${prior && priorAllEvidence.length ? `\n\nPREVIOUS REPORT: ${prior.report.month}/${prior.report.year}\nPREVIOUS RETAINED STRUCTURED DATA:\n${previousMetadataText(priorAllEvidence, priorEvidence, priorLabels)}` : "\n\nNO PREVIOUS COMPLETED REPORT WITH ELIGIBLE EVIDENCE IS AVAILABLE."}`,
     }];
 
-    for (const item of currentEvidence) {
+    for (const { item, image } of readableCurrent) {
       const label = currentLabels.get(item.id)!;
       if (item.localImagePath) {
         content.push({ type: "input_text", text: `Current screenshot for [${label}]:` });
-        content.push(await imagePart(item, label));
+        content.push(image);
       }
     }
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -260,7 +244,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
 
     await prisma.brandReport.update({
       where: { id: brandReportId },
-      data: { analysisJson: JSON.stringify(parsed), analysisEditedJson: null, automationStatus: "READY", automationError: null, automationEndedAt: new Date() },
+      data: { analysisJson: JSON.stringify(parsed), analysisEditedJson: null, analysisNeedsRegeneration: false, automationStatus: "READY", automationError: null, automationEndedAt: new Date() },
     });
     const remaining = await prisma.brandReport.count({
       where: { reportId: current.reportId, included: true, automationStatus: { not: "READY" } },

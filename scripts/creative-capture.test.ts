@@ -112,7 +112,9 @@ async function main() {
     await page.setContent("<h1>This content isn't available right now</h1><p>The ad may have been deleted.</p>");
     await assert.rejects(captureLoadedPage(page, { ...request, source: "META" }), /ad is unavailable/);
     await page.setContent("<body style='margin:0;background:white'></body>");
-    assert.equal((await captureLoadedPage(page, request)).method, "PAGE_FALLBACK", "A low-byte blank image is still a valid screenshot");
+    await assert.rejects(captureLoadedPage(page, request), /did not render an identifiable ad page/, "An empty successful response is not ad evidence");
+    await page.setContent("<title>Log in to Facebook</title><p>Enter your email and password</p>");
+    await assert.rejects(captureLoadedPage(page, { ...request, source: "META" }), /blocked by the source platform/);
 
     assert.equal(safeCaptureUrl("https://name:password@example.com/ad?id=42&token=secret#fragment"), "https://example.com/ad");
     assert.ok(!safeCaptureText("Navigation to https://example.com/?secret=sensitive failed").includes("sensitive"));

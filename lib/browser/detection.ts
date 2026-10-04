@@ -6,10 +6,10 @@ export const selectors: Record<CreativeSource, string[]> = {
   META: ["[data-testid*='ad_snapshot']", "[data-testid*='ad-creative']", "[class*='adCreative']", "main article"],
 };
 
-const mediaSelectors = [
+const containerSelectors = [
   "[data-testid*='ad-preview']", "[class*='ad-preview']", "[class*='adPreview']",
   "[class*='creative-container']", "[class*='creativeContainer']",
-  "[role='article']", "img", "video", "canvas", "iframe",
+  "[role='article']",
 ];
 
 type Candidate = { locator: Locator; area: number };
@@ -17,7 +17,7 @@ type Candidate = { locator: Locator; area: number };
 export async function detectCreative(page: Page, source: CreativeSource) {
   const diagnostics: SelectorDiagnostic[] = [];
   // Source-specific candidates always take priority over generic page media.
-  for (const group of [selectors[source], mediaSelectors]) {
+  for (const group of [selectors[source], ["img", "video", "canvas", "iframe"], containerSelectors]) {
     const candidates: Candidate[] = [];
     for (const selector of group) {
       const locator = page.locator(selector);

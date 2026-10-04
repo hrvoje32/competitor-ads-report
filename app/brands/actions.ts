@@ -2,6 +2,8 @@
 
 import { Prisma } from "@prisma/client";
 import { normalizeGoogleDomain } from "@/lib/google-domain";
+import { parseFilterLines } from "@/lib/brand-ad-filter";
+import { refreshBrandEvidence } from "@/lib/brand-evidence";
 import { prisma } from "@/lib/prisma";
 import { saveLogo } from "@/lib/uploads";
 import { revalidatePath } from "next/cache";
@@ -42,6 +44,7 @@ function actionError(error: unknown) {
     return `Database error (${error.code}). The brand was not saved.`;
   }
   if (error instanceof Error && error.message.startsWith("Logo ")) return error.message;
+  if (error instanceof Error && error.message.startsWith("Ad filtering:")) return error.message;
   return "Unable to save the brand. Check the development server log for details.";
 }
 
@@ -69,8 +72,14 @@ function input(formData: FormData) {
   });
   const googleAdvertisers = entries(scalar.googleAdvertiserIds, scalar.googleAdvertiserLabels).map(([advertiserId, label]) => ({ advertiserId, label }));
   const metaPages = entries(scalar.metaPageIds, scalar.metaPageNames).map(([pageId, pageName]) => ({ pageId, pageName }));
+  const filters = Object.fromEntries(["adIncludeKeywords", "adExcludeKeywords", "adAllowedDomains", "adExcludedDomains"].map(key => {
+    const value = String(formData.get(key) ?? "");
+    if (value.length > 10_000) throw new Error("Ad filtering: each field must be at most 10,000 characters.");
+    try { return [key, parseFilterLines(value, key.endsWith("Domains"))]; }
+    catch { throw new Error("Ad filtering: enter valid domains, one per line."); }
+  }));
   return {
-    scalar: { name: scalar.name, websiteUrl: nullable(scalar.websiteUrl), googleDomain: nullable(scalar.googleDomain), countryCode: scalar.countryCode.toUpperCase(), sortOrder: scalar.sortOrder },
+    scalar: { name: scalar.name, websiteUrl: nullable(scalar.websiteUrl), googleDomain: nullable(scalar.googleDomain), countryCode: scalar.countryCode.toUpperCase(), sortOrder: scalar.sortOrder, ...filters },
     googleAdvertisers,
     metaPages,
   };
@@ -92,6 +101,7 @@ export async function createBrand(_state: BrandActionState, formData: FormData):
   }
   revalidatePath("/brands");
   revalidatePath("/reports/new");
+  revalidatePath("/reports", "layout");
   redirect("/brands");
 }
 
@@ -106,11 +116,14 @@ export async function updateBrand(id: string, _state: BrandActionState, formData
       if (googleAdvertisers.length) await tx.googleAdvertiser.createMany({ data: googleAdvertisers.map(item => ({ ...item, brandId: id })) });
       if (metaPages.length) await tx.metaPage.createMany({ data: metaPages.map(item => ({ ...item, brandId: id })) });
     });
+    const reports = await prisma.brandReport.findMany({ where: { brandId: id }, select: { id: true } });
+    for (const report of reports) await refreshBrandEvidence(report.id);
   } catch (error) {
     return { error: actionError(error) };
   }
   revalidatePath("/brands");
   revalidatePath("/reports/new");
+  revalidatePath("/reports", "layout");
   redirect("/brands");
 }
 
@@ -118,4 +131,5 @@ export async function deleteBrand(id: string) {
   await prisma.brand.delete({ where: { id } });
   revalidatePath("/brands");
   revalidatePath("/reports/new");
+  revalidatePath("/reports", "layout");
 }

@@ -1,3 +1,4 @@
+import { filterBrandAd } from "@/lib/brand-ad-filter";
 import { NextRequest } from "next/server";
 import PptxGenJS from "pptxgenjs";
 import sharp from "sharp";
@@ -369,6 +370,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   for (const brandReport of report.brandReports) {
+    if (brandReport.analysisNeedsRegeneration || brandReport.adEvidence.some(item => (item.selectedForSlide || item.selectedForAnalysisEvidence) && filterBrandAd(item, brandReport.brand).brandFilterStatus === "EXCLUDED")) {
+      return new Response("Selected ads no longer match brand filters. Review evidence and regenerate analysis before exporting.", { status: 400 });
+    }
     const googleCount = brandReport.adEvidence.filter(item => item.source === "GOOGLE" && item.selectedForSlide).length;
     const metaCount = brandReport.adEvidence.filter(item => item.source === "META" && item.selectedForSlide).length;
     const analysisCount = brandReport.adEvidence.filter(item => item.selectedForAnalysisEvidence).length;

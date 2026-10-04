@@ -5,7 +5,10 @@ import { apifyError, getApifyDatasetItems, getApifyRun, startApifyActor } from "
 import { collectGoogleOfficial } from "@/lib/ad-providers/google/official";
 import { collectMetaOfficial } from "@/lib/ad-providers/meta/official";
 import { previousProviders, type ProviderSelection } from "@/lib/ad-providers/selection";
-import { capturePublicPage } from "@/lib/automatic-capture";
+import { captureOfficialCandidate } from "@/lib/official-capture";
+import { refreshBrandEvidence } from "@/lib/brand-evidence";
+import { filterBrandAd, hasUsableScreenshot } from "@/lib/brand-ad-filter";
+import { MAX_OFFICIAL_CREATIVE_CAPTURES_PER_SOURCE, captureBudgetOpen, nextCaptureCandidate } from "@/lib/official-capture-policy";
 import { googleApifyProvider, normalizeGoogleApifyAd } from "@/lib/ad-providers/google/apify";
 import { metaApifyProvider, normalizeMetaApifyAd } from "@/lib/ad-providers/meta/apify";
 import type { AdProviderSource, CollectionRequest, NormalizedAd } from "@/lib/ad-providers/types";
@@ -16,7 +19,6 @@ import { downloadFile } from "@/lib/storage";
 import { MAX_REPRESENTATIVE_MEDIA_PER_SOURCE } from "@/lib/storage-policy";
 
 const MEDIA_BATCH_SIZE = 12;
-const OFFICIAL_CAPTURE_ATTEMPTS = 12;
 const TERMINAL_APIFY_STATUSES = new Set(["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"]);
 
 type LoadedBrandReport = Awaited<ReturnType<typeof loadBrandReport>>;
@@ -166,7 +168,7 @@ function usefulRawData(item: NormalizedAd) {
   const raw = item.rawData ?? {};
   const fields = [
     "campaignId", "campaign_id", "adSetId", "adset_id", "groupId", "group_id",
-    "displayUrl", "display_url", "currency", "languages", "publisherPlatforms", "publisher_platforms", "topic", "fundedBy",
+    "advertiser_disclosed_name", "advertiser_legal_name", "advertiser_location", "ad_funded_by", "page_id", "page_name", "ad_creative_bodies", "ad_creative_link_titles", "ad_creative_link_descriptions", "ad_creative_link_captions", "campaignName", "campaign_name", "destination_url", "displayUrl", "display_url", "currency", "languages", "publisherPlatforms", "publisher_platforms", "topic", "fundedBy",
   ];
   const selected = Object.fromEntries(fields.filter(key => raw[key] !== undefined).map(key => [key, raw[key]]));
   return {
@@ -181,11 +183,6 @@ function usefulRawData(item: NormalizedAd) {
 
 function dateOverlaps(item: NormalizedAd, request: CollectionRequest) {
   return deliveryOverlapsAnalysisPeriod(item.startDate, item.endDate, request.startDate, request.endDate);
-}
-
-function belongsToBrand(item: NormalizedAd, request: CollectionRequest) {
-  if (item.source === "META") return Boolean(item.advertiserId && request.metaPageIds.includes(item.advertiserId));
-  return true;
 }
 
 function mediaCandidates(item: NormalizedAd) {
@@ -251,7 +248,7 @@ async function prepareEvidenceMetadata(brandReportId: string, source: AdProvider
 
 async function persistNormalizedAds(brandReport: NonNullable<LoadedBrandReport>, run: AdProviderRun, items: NormalizedAd[]) {
   const request = collectionRequest(brandReport);
-  const ads = items.filter(item => dateOverlaps(item, request) && belongsToBrand(item, request))
+  const ads = items.filter(item => dateOverlaps(item, request))
     .filter((item, index, all) => all.findIndex(candidate => candidate.externalId === item.externalId) === index);
 
   // Merge by source ad ID. A failed/empty official response must never erase existing evidence.
@@ -279,9 +276,9 @@ async function persistNormalizedAds(brandReport: NonNullable<LoadedBrandReport>,
         notes: JSON.stringify({ importedFrom: run.provider.toLowerCase(), actorId: run.actorId, advertiserId: item.advertiserId, advertiserName: item.advertiserName, videoUrls: item.videoUrls }),
         sortOrder: index, captureStatus: "PENDING",
       },
-      update: metadata,
+      update: { ...metadata, rawData: json(usefulRawData(item)) },
     });
-    if (!evidence.localImagePath) {
+    if (!evidence.localImagePath && (run.provider !== "OFFICIAL" || !evidence.officialCaptureAttemptedAt)) {
       await prisma.adEvidence.update({ where: { id: evidence.id }, data: { captureStatus: "PENDING", captureError: null } });
       await prisma.adMedia.updateMany({ where: { adEvidenceId: evidence.id, status: { in: ["FAILED", "DISCARDED"] } }, data: { status: "PENDING", error: null } });
     }
@@ -298,6 +295,7 @@ async function persistNormalizedAds(brandReport: NonNullable<LoadedBrandReport>,
       });
     }
   }
+  await refreshBrandEvidence(brandReport.id);
   await prepareEvidenceMetadata(brandReport.id, run.source);
   await prisma.adProviderRun.update({
     where: { id: run.id },
@@ -322,55 +320,18 @@ async function processOfficialMediaBatch(brandReport: NonNullable<LoadedBrandRep
 }
 
 async function captureOfficialMedia(brandReport: NonNullable<LoadedBrandReport>, run: AdProviderRun) {
-  const where = { brandReportId: brandReport.id, source: run.source };
-  await prisma.adEvidence.updateMany({
-    where: { ...where, captureStatus: "CAPTURING", updatedAt: { lt: new Date(Date.now() - 5 * 60_000) } },
-    data: { captureStatus: "CAPTURE_FAILED", captureError: "Screenshot capture timed out. Try Automatic Capture or upload a screenshot." },
-  });
-  const failures = await prisma.adEvidence.count({ where: { ...where, captureStatus: "CAPTURE_FAILED" } });
-  if (failures >= OFFICIAL_CAPTURE_ATTEMPTS || (process.env.VERCEL && !process.env.BROWSER_WS_ENDPOINT)) {
-    await prisma.adEvidence.updateMany({ where: { ...where, localImagePath: null, captureStatus: "PENDING" }, data: {
-      captureStatus: "CAPTURE_FAILED", captureError: "Automatic capture unavailable or attempt limit reached. Upload a screenshot or switch this source to Apify.",
-    } });
-    return;
-  }
-  const stored = await prisma.adEvidence.count({ where: { ...where, localImagePath: { not: null } } });
-  if (stored >= MAX_REPRESENTATIVE_MEDIA_PER_SOURCE) return;
-  // One capture per source per poll keeps requests bounded and lets progress remain visible.
-  // Serialize captures for a source so overlapping polls cannot exceed the storage limit.
-  if (await prisma.adEvidence.count({ where: { ...where, captureStatus: "CAPTURING" } })) return;
-  const evidence = await prisma.adEvidence.findFirst({
-    where: { ...where, localImagePath: null, captureStatus: "PENDING" },
-    orderBy: [{ representativeScore: "desc" }, { sortOrder: "asc" }],
-  });
-  if (!evidence) return;
-  const claimed = await prisma.adEvidence.updateMany({ where: { id: evidence.id, captureStatus: "PENDING" }, data: { captureStatus: "CAPTURING" } });
-  if (!claimed.count) return;
-  try {
-    const url = evidence.snapshotUrl || evidence.sourceUrl;
-    if (!url) throw new Error("No creative link was returned.");
-    const capture = await capturePublicPage(url, run.source);
-    const storedImage = await storeProviderImage(capture.image, brandReport.report, brandReport.brandId, run.source, evidence.externalId || evidence.id, capture.contentType);
-    await prisma.adEvidence.update({ where: { id: evidence.id }, data: {
-      localImagePath: storedImage.path, storedMediaBytes: storedImage.byteSize,
-      selectedForSlide: true, captureStatus: "READY", captureError: null, captureMethod: capture.method,
-    } });
-  } catch (error) {
-    await prisma.adEvidence.update({ where: { id: evidence.id }, data: {
-      captureStatus: "CAPTURE_FAILED", captureError: `${errorMessage(error)} Open the creative and upload a screenshot, or switch this source to Apify.`,
-    } });
-  }
+  await captureOfficialCandidate(brandReport.id, run.source);
 }
 
 async function processMediaBatch(brandReport: NonNullable<LoadedBrandReport>, run: AdProviderRun) {
   if (run.provider === "OFFICIAL") return processOfficialMediaBatch(brandReport, run);
   const stale = new Date(Date.now() - 5 * 60_000);
   await prisma.adMedia.updateMany({
-    where: { status: "DOWNLOADING", updatedAt: { lt: stale }, adEvidence: { brandReportId: brandReport.id, source: run.source } },
+    where: { status: "DOWNLOADING", updatedAt: { lt: stale }, adEvidence: { brandReportId: brandReport.id, source: run.source, brandFilterStatus: "INCLUDED" } },
     data: { status: "PENDING", error: null },
   });
   let selected = await prisma.adEvidence.findMany({
-    where: { brandReportId: brandReport.id, source: run.source, localImagePath: { not: null } },
+    where: { brandReportId: brandReport.id, source: run.source, brandFilterStatus: "INCLUDED", localImagePath: { not: null } },
     orderBy: [{ representativeScore: "desc" }, { sortOrder: "asc" }],
   });
   if (selected.length) await prisma.adEvidence.updateMany({
@@ -379,7 +340,7 @@ async function processMediaBatch(brandReport: NonNullable<LoadedBrandReport>, ru
   });
   if (selected.length >= MAX_REPRESENTATIVE_MEDIA_PER_SOURCE) {
     await prisma.adMedia.updateMany({
-      where: { status: { in: ["PENDING", "DOWNLOADING"] }, adEvidence: { brandReportId: brandReport.id, source: run.source } },
+      where: { status: { in: ["PENDING", "DOWNLOADING"] }, adEvidence: { brandReportId: brandReport.id, source: run.source, brandFilterStatus: "INCLUDED" } },
       data: { status: "DISCARDED", error: "Representative storage limit reached." },
     });
     return;
@@ -387,13 +348,13 @@ async function processMediaBatch(brandReport: NonNullable<LoadedBrandReport>, ru
   const selectedGroups = selected.map(item => item.duplicateGroupKey).filter((value): value is string => Boolean(value));
   if (selectedGroups.length) {
     await prisma.adMedia.updateMany({
-      where: { status: "PENDING", adEvidence: { brandReportId: brandReport.id, source: run.source, duplicateGroupKey: { in: selectedGroups } } },
+      where: { status: "PENDING", adEvidence: { brandReportId: brandReport.id, source: run.source, brandFilterStatus: "INCLUDED", duplicateGroupKey: { in: selectedGroups } } },
       data: { status: "DISCARDED", error: "Duplicate copy group already has a representative." },
     });
   }
 
   const allPending = await prisma.adMedia.findMany({
-    where: { status: "PENDING", adEvidence: { brandReportId: brandReport.id, source: run.source } },
+    where: { status: "PENDING", adEvidence: { brandReportId: brandReport.id, source: run.source, brandFilterStatus: "INCLUDED" } },
     include: { adEvidence: true },
   });
   const pending = allPending
@@ -431,7 +392,7 @@ async function processMediaBatch(brandReport: NonNullable<LoadedBrandReport>, ru
           where: {
             id: { not: media.id },
             status: "PENDING",
-            adEvidence: { brandReportId: brandReport.id, source: run.source, duplicateGroupKey: media.adEvidence.duplicateGroupKey },
+            adEvidence: { brandReportId: brandReport.id, source: run.source, brandFilterStatus: "INCLUDED", duplicateGroupKey: media.adEvidence.duplicateGroupKey },
           },
           data: { status: "DISCARDED", error: "Duplicate group already has a selected representative." },
         }),
@@ -448,14 +409,14 @@ async function processMediaBatch(brandReport: NonNullable<LoadedBrandReport>, ru
 
   if (selected.length >= MAX_REPRESENTATIVE_MEDIA_PER_SOURCE) {
     await prisma.adMedia.updateMany({
-      where: { status: { in: ["PENDING", "DOWNLOADING"] }, adEvidence: { brandReportId: brandReport.id, source: run.source } },
+      where: { status: { in: ["PENDING", "DOWNLOADING"] }, adEvidence: { brandReportId: brandReport.id, source: run.source, brandFilterStatus: "INCLUDED" } },
       data: { status: "DISCARDED", error: "Representative storage limit reached." },
     });
     return;
   }
 
   const mediaStillPending = await prisma.adMedia.count({
-    where: { status: { in: ["PENDING", "DOWNLOADING"] }, adEvidence: { brandReportId: brandReport.id, source: run.source } },
+    where: { status: { in: ["PENDING", "DOWNLOADING"] }, adEvidence: { brandReportId: brandReport.id, source: run.source, brandFilterStatus: "INCLUDED" } },
   });
   if (mediaStillPending) return;
 
@@ -464,7 +425,7 @@ async function processMediaBatch(brandReport: NonNullable<LoadedBrandReport>, ru
     const withoutImageCandidates = await prisma.adEvidence.findMany({
       where: {
         brandReportId: brandReport.id,
-        source: run.source,
+        source: run.source, brandFilterStatus: "INCLUDED",
         localImagePath: null,
         captureStatus: "PENDING",
         duplicateGroupKey: { notIn: selected.map(item => item.duplicateGroupKey).filter((value): value is string => Boolean(value)) },
@@ -497,11 +458,11 @@ async function processMediaBatch(brandReport: NonNullable<LoadedBrandReport>, ru
     }
   } else {
     await prisma.adEvidence.updateMany({
-      where: { brandReportId: brandReport.id, source: run.source, localImagePath: null, captureStatus: "PENDING", media: { none: {} } },
+      where: { brandReportId: brandReport.id, source: run.source, brandFilterStatus: "INCLUDED", localImagePath: null, captureStatus: "PENDING", media: { none: {} } },
       data: { captureStatus: "CAPTURE_FAILED", captureError: "No media URL was provided." },
     });
     const failedEvidence = await prisma.adEvidence.findMany({
-      where: { brandReportId: brandReport.id, source: run.source, localImagePath: null, captureStatus: "PENDING", media: { some: { status: "FAILED" } } },
+      where: { brandReportId: brandReport.id, source: run.source, brandFilterStatus: "INCLUDED", localImagePath: null, captureStatus: "PENDING", media: { some: { status: "FAILED" } } },
       include: { media: { where: { status: "FAILED" }, orderBy: { sortOrder: "asc" }, take: 1 } },
     });
     if (failedEvidence.length) await prisma.$transaction(failedEvidence.map(evidence => prisma.adEvidence.update({
@@ -513,19 +474,22 @@ async function processMediaBatch(brandReport: NonNullable<LoadedBrandReport>, ru
 
 async function finishProviderIfReady(brandReport: NonNullable<LoadedBrandReport>, run: AdProviderRun) {
   const pendingMedia = await prisma.adMedia.count({
-    where: { status: { in: ["PENDING", "DOWNLOADING"] }, adEvidence: { brandReportId: brandReport.id, source: run.source } },
+    where: { status: { in: ["PENDING", "DOWNLOADING"] }, adEvidence: { brandReportId: brandReport.id, source: run.source, brandFilterStatus: "INCLUDED" } },
   });
   if (run.provider === "OFFICIAL") {
     const where = { brandReportId: brandReport.id, source: run.source };
-    const capturing = await prisma.adEvidence.count({ where: { ...where, captureStatus: "CAPTURING" } });
-    if (capturing) return;
-    const images = await prisma.adEvidence.count({ where: { ...where, localImagePath: { not: null } } });
-    if (images < MAX_REPRESENTATIVE_MEDIA_PER_SOURCE && await prisma.adEvidence.count({ where: { ...where, localImagePath: null, captureStatus: "PENDING" } })) return;
+    const state = await prisma.officialCaptureState.findUnique({ where: { brandReportId_source: where } });
+    if (state?.leaseToken) return;
+    const evidence = await prisma.adEvidence.findMany({ where });
+    const stored = evidence.filter(hasUsableScreenshot).length;
+    if (!(process.env.VERCEL && !process.env.BROWSER_WS_ENDPOINT)
+      && captureBudgetOpen(state?.attempts ?? 0, stored)
+      && nextCaptureCandidate(evidence, state?.attempts ?? 0, stored)) return;
   } else if (pendingMedia) return;
   const [stored, failedDownloads, missingMedia] = await Promise.all([
-    prisma.adEvidence.count({ where: { brandReportId: brandReport.id, source: run.source, selectedForSlide: true, localImagePath: { not: null } } }),
-    prisma.adMedia.count({ where: { status: "FAILED", adEvidence: { brandReportId: brandReport.id, source: run.source } } }),
-    prisma.adEvidence.count({ where: { brandReportId: brandReport.id, source: run.source, captureStatus: "CAPTURE_FAILED" } }),
+    prisma.adEvidence.count({ where: { brandReportId: brandReport.id, source: run.source, brandFilterStatus: "INCLUDED", selectedForSlide: true, localImagePath: { not: null } } }),
+    prisma.adMedia.count({ where: { status: "FAILED", adEvidence: { brandReportId: brandReport.id, source: run.source, brandFilterStatus: "INCLUDED" } } }),
+    prisma.adEvidence.count({ where: { brandReportId: brandReport.id, source: run.source, brandFilterStatus: "INCLUDED", captureStatus: "CAPTURE_FAILED" } }),
   ]);
   const label = run.source === "GOOGLE" ? "Google" : "Meta";
   const warnings = [
@@ -665,6 +629,9 @@ function textSimilarity(left: string, right: string) {
 }
 
 export async function groupAndSelectEvidence(brandReportId: string) {
+  await refreshBrandEvidence(brandReportId);
+  const report = await loadBrandReport(brandReportId);
+  if (!report) throw new Error("Brand report not found.");
   const evidence = await prisma.adEvidence.findMany({ where: { brandReportId }, orderBy: [{ source: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }] });
   const prepared: Array<AdEvidence & { imageHash: string | null; imageDigest: string | null; text: string; textHash: string }> = [];
   for (const item of evidence) {
@@ -672,9 +639,9 @@ export async function groupAndSelectEvidence(brandReportId: string) {
     const textHash = crypto.createHash("sha256").update(itemText).digest("hex");
     let imageHash = item.perceptualHash;
     let imageDigest: string | null = null;
-    if (item.localImagePath) {
+    if (hasUsableScreenshot(item) && filterBrandAd(item, report.brand).brandFilterStatus === "INCLUDED") {
       try {
-        const buffer = await downloadFile(item.localImagePath);
+        const buffer = await downloadFile(item.localImagePath!);
         imageHash ||= await perceptualHash(buffer);
         imageDigest = crypto.createHash("sha256").update(buffer).digest("hex");
       } catch { imageHash = null; }
@@ -710,11 +677,12 @@ export async function groupAndSelectEvidence(brandReportId: string) {
     where: { id: update.item.id },
     data: { perceptualHash: update.imageHash, normalizedTextHash: update.textHash, duplicateGroupKey: update.groupKey, duplicateGroupCount: update.groupCount, representativeScore: update.score, selectedForSlide: false, selectedForAnalysisEvidence: false },
   })));
-  const representatives = updates.filter(update => update.item.localImagePath)
+  const representatives = updates.filter(update => update.imageHash && hasUsableScreenshot(update.item) && filterBrandAd(update.item, report.brand).brandFilterStatus === "INCLUDED")
     .sort((a, b) => b.score - a.score || a.item.sortOrder - b.item.sortOrder)
     .filter((update, index, all) => all.findIndex(candidate => candidate.groupKey === update.groupKey) === index);
-  const google = representatives.filter(item => item.item.source === "GOOGLE").slice(0, 8);
-  const meta = representatives.filter(item => item.item.source === "META").slice(0, 8);
+  const limit = (source: AdProviderSource) => report.providerRuns.find(run => run.source === source)?.provider === "OFFICIAL" ? MAX_OFFICIAL_CREATIVE_CAPTURES_PER_SOURCE : MAX_REPRESENTATIVE_MEDIA_PER_SOURCE;
+  const google = representatives.filter(item => item.item.source === "GOOGLE").slice(0, limit("GOOGLE"));
+  const meta = representatives.filter(item => item.item.source === "META").slice(0, limit("META"));
   const slideRepresentatives = [...google, ...meta];
   const analysis: typeof slideRepresentatives = [];
   for (const source of ["GOOGLE", "META"] as const) { const strongest = slideRepresentatives.find(item => item.item.source === source); if (strongest) analysis.push(strongest); }

@@ -38,7 +38,7 @@ async function main() {
   const unexpected = () => { throw new Error("Unexpected database call"); };
   const delegate = () => Object.fromEntries(["findUnique", "findUniqueOrThrow", "findFirst", "findMany", "update", "updateMany", "upsert", "count", "deleteMany"].map(name => [name, unexpected]));
   // Prisma's delegates are proxies; install plain delegates before the app imports its singleton.
-  Object.assign(globalThis, { prisma: { brandReport: delegate(), report: delegate(), adProviderRun: delegate(), adEvidence: delegate(), adMedia: delegate(), $transaction: unexpected } });
+  Object.assign(globalThis, { prisma: { brandReport: delegate(), report: delegate(), adProviderRun: delegate(), officialCaptureState: delegate(), adEvidence: delegate(), adMedia: delegate(), $transaction: unexpected } });
   const { prisma } = await import("../lib/prisma");
   const { BigQuery } = await import("@google-cloud/bigquery");
   const { ApifyClient } = await import("apify-client");
@@ -53,6 +53,7 @@ async function main() {
   assert.equal(googleDate("bad date"), null);
 
   const runs: Row[] = [];
+  const budgets: Row[] = [];
   const evidence: Row[] = [{
     id: "saved", brandReportId: "brand-report", source: "GOOGLE", externalId: "creative-1",
     headline: "Existing ad copy", body: null, description: null, cta: null, landingPageUrl: null,
@@ -65,14 +66,23 @@ async function main() {
     brand: { name: "Example", googleDomain: "example.com", googleAdvertisers: [{ advertiserId: "advertiser-1" }], metaPages: [{ pageId: "123" }] },
     report: { countryCode: "HR", startDate: new Date("2026-09-02"), endDate: new Date("2026-09-29") },
   };
-  mock.method(prisma.brandReport, "findUnique", async () => structuredClone(brand));
+  mock.method(prisma.brandReport, "findUnique", async () => structuredClone({ ...brand, adEvidence: evidence }));
   mock.method(prisma.brandReport, "update", async ({ data }: { data: Row }) => assign(brand, data));
   mock.method(prisma.brandReport, "updateMany", async ({ where, data }: { where: Row; data: Row }) => {
     if (!matches(brand, where)) return { count: 0 };
     assign(brand, data); return { count: 1 };
   });
   mock.method(prisma.report, "update", async () => ({}));
-  mock.method(prisma, "$transaction", async (promises: Promise<unknown>[]) => Promise.all(promises));
+  mock.method(prisma, "$transaction", async (operation: Promise<unknown>[] | ((tx: typeof prisma) => Promise<unknown>)) => typeof operation === "function" ? operation(prisma) : Promise.all(operation));
+  mock.method(prisma.officialCaptureState, "upsert", async ({ where, create }: { where: { brandReportId_source: Row }; create: Row }) => {
+    let state = budgets.find(row => matches(row, where.brandReportId_source));
+    if (!state) { state = { id: `budget-${budgets.length}`, attempts: 0, leaseToken: null, leaseStartedAt: null, ...create }; budgets.push(state); }
+    return state;
+  });
+  for (const method of ["findUnique", "findUniqueOrThrow"] as const) mock.method(prisma.officialCaptureState, method, async ({ where }: { where: { brandReportId_source: Row } }) => budgets.find(row => matches(row, where.brandReportId_source)) ?? null);
+  mock.method(prisma.officialCaptureState, "updateMany", async ({ where, data }: { where: Row; data: Row }) => {
+    const found = budgets.filter(row => matches(row, where)); found.forEach(row => assign(row, data)); return { count: found.length };
+  });
   mock.method(prisma.adProviderRun, "upsert", async ({ where, create, update }: { where: { brandReportId_source: Row }; create: Row; update: Row }) => {
     const found = runs.find(run => matches(run, where.brandReportId_source));
     if (found) return assign(found, update);
@@ -90,7 +100,7 @@ async function main() {
   mock.method(prisma.adEvidence, "upsert", async ({ where, create, update }: { where: { brandReportId_source_externalId: Row }; create: Row; update: Row }) => {
     const found = evidence.find(item => matches(item, where.brandReportId_source_externalId));
     if (found) return assign(found, update);
-    const item = { id: `evidence-${evidence.length}`, localImagePath: null, ...create }; evidence.push(item); return item;
+    const item = { id: `evidence-${evidence.length}`, localImagePath: null, captureCandidateRank: null, officialCaptureAttemptedAt: null, ...create }; evidence.push(item); return item;
   });
   mock.method(prisma.adEvidence, "findMany", async ({ where }: { where: Row }) => evidence.filter(item => matches(item, where)));
   mock.method(prisma.adEvidence, "count", async ({ where }: { where: Row }) => evidence.filter(item => matches(item, where)).length);
@@ -137,7 +147,8 @@ async function main() {
   assert.equal(metaCalls, 2, "Connection check plus one collection request");
   assert.equal(apifyCalls, 0);
   assert.equal(runs.every(run => run.status === "SUCCEEDED"), true);
-  assert.equal(evidence.length, 2, "Deduplicate and reject unrelated/out-of-period ads");
+  assert.equal(evidence.length, 3, "Deduplicate, retain excluded Page records, and reject out-of-period ads");
+  assert.equal(evidence.find(item => item.externalId === "wrong-brand")?.brandFilterStatus, "EXCLUDED");
   assert.equal(evidence[0].headline, "Existing ad copy", "Topic must not replace ad copy");
   assert.equal(evidence[0].localImagePath, "preserved.webp");
   assert.equal(evidence[0].cropX, 10);
@@ -151,7 +162,7 @@ async function main() {
   await startBrandAutomation("brand-report"); // Remembers official providers.
   await advanceBrandCollection("brand-report");
   assert.equal(runs.every(run => run.status === "FAILED"), true);
-  assert.equal(evidence.length, 2);
+  assert.equal(evidence.length, 3);
   assert.equal(apifyCalls, 0, "Official failures must never trigger paid fallback");
   assert.equal(String(runs[1].error).includes("test-meta-token"), false);
 
@@ -165,6 +176,18 @@ async function main() {
   assert.equal(runs[0].status, "SUCCEEDED", "Switching back must poll and import the Apify dataset");
   assert.equal(evidence[0].headline, "Updated ad copy");
   assert.equal(evidence[0].localImagePath, "preserved.webp");
+  // An exhausted official budget must not disable Apify media processing.
+  brand.automationStatus = "READY";
+  evidence[0].localImagePath = null;
+  evidence[0].captureStatus = "CAPTURE_FAILED";
+  evidence[0].officialCaptureAttemptedAt = new Date();
+  const googleBudget = budgets.find(row => row.source === "GOOGLE")!;
+  googleBudget.attempts = 8;
+  mock.method(prisma.adMedia, "count", async () => 1); // Keep a download pending; no storage calls.
+  await startBrandAutomation("brand-report", { providers: { GOOGLE: "APIFY", META: "OFFICIAL" } });
+  await advanceBrandCollection("brand-report");
+  assert.equal(evidence[0].captureStatus, "PENDING", "Apify can still retry/download after an official failure");
+  assert.equal(googleBudget.attempts, 8, "Provider switching must not restore the official budget");
   console.log("Provider switching, official collection, cost guard, concurrency, and evidence preservation tests passed.");
 }
 
