@@ -1,6 +1,6 @@
 import type { Page } from "playwright";
 import type { CreativeCaptureRequest } from "@/lib/browser/types";
-import { safeCaptureUrl } from "@/lib/browser/diagnostics";
+import { safeCaptureText, safeCaptureUrl } from "@/lib/browser/diagnostics";
 
 function metaSnapshotId(raw: string): string | undefined {
   try {
@@ -61,6 +61,30 @@ export function metaLibraryFallbackUrl(raw: string): string | undefined {
   return fallback.toString();
 }
 
+// Capture the rejection, not just its status. Never store response HTML,
+// request headers, cookies, or full URLs. The outer capture layer also redacts.
+async function metaNavigationFailure(page: Page, request: CreativeCaptureRequest) {
+  if (request.source !== "META") return "";
+  let title = "", visibleText = "";
+  try { title = await page.title(); } catch { /* Navigation may have closed the page. */ }
+  try { visibleText = await page.locator("body").innerText({ timeout: 2_000 }); } catch { /* Some error responses have no document. */ }
+  let detail = title;
+  try {
+    const payload = JSON.parse(visibleText);
+    if (payload?.error && typeof payload.error === "object") {
+      const { code, error_subcode: subcode, type, message } = payload.error;
+      detail = [typeof code === "number" ? `Meta code ${code}` : "", typeof subcode === "number" ? `subcode ${subcode}` : "",
+        typeof type === "string" ? type : "", typeof message === "string" ? message : ""].filter(Boolean).join("; ");
+    }
+  } catch {
+    // Visible error text only, bounded and sanitized. Embedded scripts/HTML are
+    // intentionally excluded by innerText, and secret query values are removed.
+    detail = [title, visibleText.trim().replace(/\s+/g, " ").slice(0, 400)].filter(Boolean).join(" — ");
+  }
+  const safe = safeCaptureText(detail, request.url).trim();
+  return safe ? ` Meta response: ${safe}` : " Meta returned no readable error details.";
+}
+
 export async function navigateCreativePage(page: Page, request: CreativeCaptureRequest) {
   const options = { waitUntil: "domcontentloaded" as const, timeout: 30_000 };
   const navigationUrl = request.source === "META"
@@ -70,7 +94,7 @@ export async function navigateCreativePage(page: Page, request: CreativeCaptureR
   if (status === undefined || status < 400) return;
   const fallback = request.source === "META" && [404, 410].includes(status)
     ? metaLibraryFallbackUrl(request.url) : undefined;
-  if (!fallback) throw new Error(`Creative navigation failed (HTTP ${status}).`);
+  if (!fallback) throw new Error(`Creative navigation failed (HTTP ${status}).${await metaNavigationFailure(page, request)}`);
 
   console.warn("Meta snapshot unavailable; trying the same ad in the public Ad Library", JSON.stringify({
     source: request.source, status, snapshotUrl: safeCaptureUrl(request.url), fallbackUrl: safeCaptureUrl(fallback),
@@ -79,6 +103,6 @@ export async function navigateCreativePage(page: Page, request: CreativeCaptureR
   const retry = await page.goto(fallback, options);
   const retryStatus = retry?.status();
   if (retryStatus !== undefined && retryStatus >= 400) {
-    throw new Error(`Meta snapshot returned HTTP ${status}; the public Ad Library page also failed (HTTP ${retryStatus}).`);
+    throw new Error(`Meta snapshot returned HTTP ${status}; the public Ad Library page also failed (HTTP ${retryStatus}).${await metaNavigationFailure(page, request)}`);
   }
 }

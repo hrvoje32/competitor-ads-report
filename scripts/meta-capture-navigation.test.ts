@@ -63,6 +63,30 @@ async function main() {
     await assert.rejects(navigateCreativePage(publicMissing.page, { source: "META", url: library }), /HTTP 404/);
     assert.equal(publicMissing.visited.length, 1);
 
+    const rejected = fakePage([400]);
+    Object.assign(rejected.page, {
+      title: async () => "Bad Request",
+      locator: () => ({ innerText: async () => JSON.stringify({ error: { code: 190, error_subcode: 463, type: "OAuthException", message: "Invalid token private-test-token" } }) }),
+    });
+    await assert.rejects(navigateCreativePage(rejected.page, { source: "META", url: snapshot }), error => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /HTTP 400.*Meta code 190; subcode 463; OAuthException/);
+      assert.ok(!error.message.includes("private-test-token"));
+      return true;
+    });
+    assert.equal(rejected.visited.length, 1, "Diagnostics add no navigation attempts");
+    const htmlFailure = fakePage([403]);
+    Object.assign(htmlFailure.page, {
+      title: async () => "Access denied",
+      locator: () => ({ innerText: async () => "Request rejected https://facebook.com/?access_token=private-test-token" }),
+    });
+    await assert.rejects(navigateCreativePage(htmlFailure.page, { source: "META", url: snapshot }), error => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Access denied/);
+      assert.ok(!error.message.includes("private-test-token"));
+      return true;
+    });
+
     const token = "fresh-test-meta-token";
     process.env.META_ACCESS_TOKEN = token;
     const stored = publicMetaSnapshot(snapshot)!;
