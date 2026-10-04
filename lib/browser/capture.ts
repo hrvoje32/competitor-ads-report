@@ -4,9 +4,9 @@ import type { CaptureDiagnostics, CreativeCaptureRequest, CreativeCaptureResult 
 import { detectCreative, fallbackClip } from "@/lib/browser/detection";
 import { safeCaptureText, safeCaptureUrl } from "@/lib/browser/diagnostics";
 import { assertPublicHttpUrl } from "@/lib/browser/security";
-import { navigateCreativePage } from "@/lib/browser/navigation";
+import { captureRequestPrivacy, navigateCreativePage, tokenFreeMetaRedirect } from "@/lib/browser/navigation";
 
-async function routeSafely(page: Page) {
+async function routeSafely(page: Page, source: CreativeCaptureRequest["source"]) {
   await page.route("**/*", async route => {
     const requestUrl = new URL(route.request().url());
     if (!["http:", "https:"].includes(requestUrl.protocol)) {
@@ -15,7 +15,23 @@ async function routeSafely(page: Page) {
     }
     try {
       await assertPublicHttpUrl(requestUrl.toString());
-      await route.continue();
+      if (source === "META") {
+        const privacy = captureRequestPrivacy(requestUrl.toString(), route.request().headers(), process.env.META_ACCESS_TOKEN);
+        if (privacy.block) { await route.abort(); return; }
+        if (requestUrl.searchParams.has("access_token")) {
+          // Playwright routing does not intercept every HTTP redirect. Fetch only
+          // this response, remove credentials from Location, and suppress referrers
+          // before handing the document/redirect back to the browser.
+          const response = await route.fetch({ headers: privacy.headers, maxRedirects: 0, timeout: 30_000 });
+          const headers: Record<string, string> = { ...response.headers(), "referrer-policy": "no-referrer" };
+          if (headers.location) headers.location = tokenFreeMetaRedirect(headers.location, requestUrl.toString(), process.env.META_ACCESS_TOKEN);
+          await route.fulfill({ response, headers });
+        } else {
+          await route.continue({ headers: privacy.headers });
+        }
+      } else {
+        await route.continue();
+      }
     } catch {
       await route.abort();
     }
@@ -95,7 +111,7 @@ export async function captureWithBrowser(browser: Browser, request: CreativeCapt
     await assertPublicHttpUrl(request.url);
     context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, javaScriptEnabled: true, locale: "en-US" });
     const page = await context.newPage();
-    await routeSafely(page);
+    await routeSafely(page, request.source);
     await navigateCreativePage(page, request);
     await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
     await page.waitForTimeout(1_500);

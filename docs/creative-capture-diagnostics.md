@@ -8,7 +8,17 @@ with edge navigation cropped when measurable. `captureStatus` is `READY` after
 storage succeeds; `captureMethod` distinguishes `CREATIVE` from `PAGE_FALLBACK`.
 The evidence card labels page fallbacks for review and manual cropping.
 
-If a Meta `/ads/archive/render_ad/` snapshot returns HTTP 404 or 410, capture
+Meta snapshot links remain token-free in storage and the UI. At capture time only,
+the server restores `META_ACCESS_TOKEN` for HTTPS Facebook `/ads/archive/render_ad/`
+URLs with a numeric Library ID. It builds a canonical URL without supplied extra
+parameters. The Meta network route removes token-bearing referrers and blocks
+requests that would carry the token to another host/path. Authenticated responses
+are fetched without following redirects, then returned with a no-referrer policy
+and a token-free redirect Location (if any). Diagnostics redact the token.
+This follows the authenticated snapshot format in Meta's Ad Library API example:
+https://www.facebook.com/ads/library/api/
+
+If that Meta `/ads/archive/render_ad/` snapshot returns HTTP 404 or 410, capture
 tries `https://www.facebook.com/ads/library/?id=AD_ID` once for the same numeric
 Library ID. The alternate URL contains no token. Other HTTP errors remain hard
 failures, as do unavailable-content pages returned with HTTP 200. This recovery
