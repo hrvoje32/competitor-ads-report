@@ -111,7 +111,7 @@ async function startSource(brandReport: NonNullable<LoadedBrandReport>, source: 
 
   const previous = brandReport.providerRuns.find(run => run.source === source);
   const previousInput = previous?.inputJson && typeof previous.inputJson === "object" && !Array.isArray(previous.inputJson)
-    ? { ...previous.inputJson, [source === "GOOGLE" ? "maxAds" : "maxResults"]: MAX_APIFY_CANDIDATES_PER_SOURCE } : null;
+    ? { ...previous.inputJson, [source === "GOOGLE" ? "maxAds" : "maxResults"]: provider.input[source === "GOOGLE" ? "maxAds" : "maxResults"] } : null;
   if (previous?.provider === "APIFY" && previous.itemsPersistedAt && previous.datasetId
     && previous.actorId === provider.actorId && isDeepStrictEqual(previousInput, provider.input)) {
     await refreshBrandEvidence(brandReport.id);
@@ -132,7 +132,7 @@ async function startSource(brandReport: NonNullable<LoadedBrandReport>, source: 
   });
   await prisma.brandReport.update({ where: { id: brandReport.id }, data: sourceStatusData(source, "FETCHING") });
   try {
-    const run = await startApifyActor(provider.actorId, provider.input);
+    const run = await startApifyActor(provider.actorId, provider.input, { source, brandName: brandReport.brand.name });
     await prisma.adProviderRun.update({
       where: { brandReportId_source: { brandReportId: brandReport.id, source } },
       data: { runId: run.runId, datasetId: run.datasetId, status: "RUNNING", startedAt: new Date() },

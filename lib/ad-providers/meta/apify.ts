@@ -3,7 +3,7 @@ import { DEFAULT_META_ACTOR_ID } from "@/lib/ad-providers/apify";
 import { firstText, nestedRecords, parsedDate, text, textArray, uniqueUrls } from "@/lib/ad-providers/normalize";
 import { env } from "@/lib/env";
 import { record } from "@/lib/brand-ad-filter";
-import { MAX_APIFY_CANDIDATES_PER_SOURCE } from "@/lib/ad-evidence-limits";
+import { apifyInputLimit } from "@/lib/ad-providers/apify-cost-policy";
 
 function cardMedia(cards: unknown) {
   const records = nestedRecords(cards);
@@ -56,7 +56,7 @@ export function metaApifyProvider(request: CollectionRequest): ApifyProvider {
       sortBy: "recent",
       dateFrom: request.startDate,
       dateTo: request.endDate,
-      maxResults: Math.min(request.maxResults ?? MAX_APIFY_CANDIDATES_PER_SOURCE, MAX_APIFY_CANDIDATES_PER_SOURCE),
+      maxResults: apifyInputLimit(request.maxResults),
       isDetailsPerAd: true,
       includeAboutPage: false,
     },

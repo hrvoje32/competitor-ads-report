@@ -140,7 +140,14 @@ async function main() {
     return Response.json({ data: [ad, ad, { ...ad, id: "wrong-brand", page_id: "999" }, { ...ad, id: "old-ad", ad_delivery_start_time: "2025-01-01", ad_delivery_stop_time: "2025-01-20" }] });
   });
   let apifyCalls = 0;
-  mock.method(ApifyClient.prototype, "actor", () => ({ start: async () => { apifyCalls++; return { id: "apify-run", defaultDatasetId: "dataset", status: "RUNNING" }; } }));
+  mock.method(ApifyClient.prototype, "actor", () => ({
+    get: async () => ({ pricingInfos: [{ pricingModel: "PAY_PER_EVENT", startedAt: new Date("2026-01-01") }] }),
+    start: async (input: Row, options: Row) => {
+      assert.equal(options.maxTotalChargeUsd, 0.10);
+      assert.equal(input.maxAds ?? input.maxResults, 20);
+      apifyCalls++; return { id: "apify-run", defaultDatasetId: "dataset", status: "RUNNING" };
+    },
+  }));
   mock.method(ApifyClient.prototype, "run", () => ({ get: async () => ({ id: "apify-run", defaultDatasetId: "dataset", status: "SUCCEEDED" }) }));
   mock.method(ApifyClient.prototype, "dataset", () => ({ listItems: async () => ({ items: [{ creative_id: "creative-1", headline: "Updated ad copy", first_shown: "2026-09-03", last_shown: "2026-09-20" }] }) }));
 

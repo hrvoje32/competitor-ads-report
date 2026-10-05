@@ -2,7 +2,7 @@ import type { ApifyProvider, CollectionRequest, NormalizedAd } from "@/lib/ad-pr
 import { DEFAULT_GOOGLE_ACTOR_ID } from "@/lib/ad-providers/apify";
 import { firstText, parsedDate, text, textArray, uniqueUrls } from "@/lib/ad-providers/normalize";
 import { env } from "@/lib/env";
-import { MAX_APIFY_CANDIDATES_PER_SOURCE } from "@/lib/ad-evidence-limits";
+import { apifyInputLimit } from "@/lib/ad-providers/apify-cost-policy";
 
 export function normalizeGoogleApifyAd(item: Record<string, unknown>): NormalizedAd | null {
   const externalId = text(item.creative_id ?? item.creativeId);
@@ -45,7 +45,7 @@ export function googleApifyProvider(request: CollectionRequest): ApifyProvider {
       resultType: "ads",
       startDate: request.startDate,
       endDate: request.endDate,
-      maxAds: Math.min(request.maxResults ?? MAX_APIFY_CANDIDATES_PER_SOURCE, MAX_APIFY_CANDIDATES_PER_SOURCE),
+      maxAds: apifyInputLimit(request.maxResults),
       includeAdCopy: true,
       ocrImageAds: true,
     },

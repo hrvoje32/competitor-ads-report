@@ -72,8 +72,62 @@ creatives per source. Fewer are accepted. PowerPoint retains the Google, Social
 and narrative slides, and reads selected stored images only. Older selections
 above five are bounded in memory at export without deleting database records.
 
-No new schema migration or environment variable is required. Existing Vercel
-Apify and Supabase settings remain in use. `.env.local` was not used.
+No new schema migration is required. Existing Vercel Apify and Supabase settings
+remain in use. `.env.local` was not used.
+
+## Actor cost protection
+
+Both integrations start Actors through `startApifyActor` in
+`lib/ad-providers/apify.ts`, using `actor(actorId).start(input, options)`.
+No Actor calls, tasks or separate REST start paths are used.
+
+Optional Vercel configuration, with safe defaults:
+
+```text
+APIFY_MAX_ITEMS_PER_RUN=20
+APIFY_MAX_CHARGE_USD_PER_RUN=0.10
+```
+
+`lib/ad-providers/apify-cost-policy.ts` validates these values. Missing, zero,
+negative or non-numeric settings use the defaults. The item limit may be lowered
+but cannot exceed the existing 20-candidate ceiling. The charge setting accepts
+a positive finite dollar amount. These settings are read only by Apify code.
+
+Both the Google `maxAds` and Meta `maxResults` INPUT values use that bounded item
+limit, including a second check at the shared start boundary. Limiting the dataset
+read locally is only an additional guard, not the collection cost protection.
+Five representative creatives per source remains unchanged.
+
+Before starting a new run, the helper reads the configured Actor's current pricing
+metadata, ignoring future scheduled prices. An isolated read-only Vercel build on
+2026-10-05 verified the actual protected production overrides:
+
+| Production source | Current pricing | Paid-item cap | Run charge cap |
+| --- | --- | --- | --- |
+| Google | `PAY_PER_EVENT` | Not applicable; INPUT `maxAds` limits results | `$0.10` default |
+| Meta | `PAY_PER_EVENT` | Not applicable; INPUT `maxResults` limits results | `$0.10` default |
+
+Neither actor reported a higher `minimalMaxTotalChargeUsd`. No paid actor run was
+started during verification. Actor IDs remained redacted by Vercel.
+
+Apify documents `maxItems` as a pay-per-result-only charging limit. Accordingly,
+the helper supplies it for `PRICE_PER_DATASET_ITEM` actors, not PPE actors. The
+current REST documentation supports `maxTotalChargeUsd` across pricing models
+(the installed JavaScript client's older comments still describe it as PPE-only):
+https://docs.apify.com/api/v2/actors-runs-post
+
+If the API explicitly rejects `maxTotalChargeUsd` as unsupported with HTTP 400/422,
+the helper retries once without that option, retaining the actor INPUT limit and
+the paid-item cap where applicable. It logs that the dollar cap is unavailable.
+It never removes the cap for a minimum-charge validation error, authentication
+failure, timeout, or 5xx response. Automatic SDK retries are disabled for paid
+start requests to avoid duplicating a potentially accepted run. Metadata reads
+retain the client's normal retry behavior; failed metadata checks start no run.
+
+Safe logs show source, sanitized brand name, pricing model, requested result limit,
+applicable paid-item limit, actual charge-cap option and fallback protection mode.
+They never include the token or complete actor INPUT. For current PPE actors,
+`maxPaidItems` is `null`, explicitly avoiding a false claim of a paid-item cap.
 
 ## Verification
 
@@ -84,3 +138,7 @@ analysis and actual three-slide PowerPoint export tests. Run
 actor reuse. Other official capture/filter/analysis tests remain applicable.
 Tests intercept network calls and do not launch paid actors or write to
 production storage.
+
+`node --import tsx scripts/apify-cost-protection.test.ts` covers configuration,
+both actor INPUT limits, PPE/PPR run options, explicit unsupported-cap fallback,
+ambiguous-error handling, effective pricing dates and secret-safe logging.
