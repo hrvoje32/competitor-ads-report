@@ -1,5 +1,6 @@
 import { ApifyClient } from "apify-client";
 import { env } from "@/lib/env";
+import { MAX_APIFY_CANDIDATES_PER_SOURCE } from "@/lib/ad-evidence-limits";
 
 export const DEFAULT_META_ACTOR_ID = "webdata_labs/meta-ads-library-scraper";
 export const DEFAULT_GOOGLE_ACTOR_ID = "hyperbach/google-ads-transparency-scraper";
@@ -28,6 +29,6 @@ export async function getApifyRun(runId: string) {
 }
 
 export async function getApifyDatasetItems(datasetId: string) {
-  const { items } = await apifyClient().dataset(datasetId).listItems({ clean: true, limit: 10_000 });
-  return items as Record<string, unknown>[];
+  const { items } = await apifyClient().dataset(datasetId).listItems({ clean: true, limit: MAX_APIFY_CANDIDATES_PER_SOURCE });
+  return items.slice(0, MAX_APIFY_CANDIDATES_PER_SOURCE) as Record<string, unknown>[];
 }

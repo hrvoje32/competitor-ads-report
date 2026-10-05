@@ -32,7 +32,7 @@ function recent(item: CaptureCandidate) { return (item.lastShown || item.firstSh
 
 // Never mutate/delete collected records. Prefer a stored member of a duplicate
 // group so regeneration cannot choose its uncaptured twin and reopen the ad.
-export function rankCaptureCandidates<T extends CaptureCandidate>(items: T[]): T[] {
+export function rankCaptureCandidates<T extends CaptureCandidate>(items: T[], apifyMedia = false): T[] {
   const sorted = items.filter(item => item.brandFilterStatus !== "EXCLUDED")
     .sort((a, b) => Number(hasUsableScreenshot(b)) - Number(hasUsableScreenshot(a)) || recent(b) - recent(a) || a.id.localeCompare(b.id));
   const parents = sorted.map((_, index) => index);
@@ -41,6 +41,8 @@ export function rankCaptureCandidates<T extends CaptureCandidate>(items: T[]): T
   sorted.forEach((item, index) => {
     const copy = message(item);
     const itemKeys = [item.externalId && `id:${item.externalId}`,
+      ...(apifyMedia ? [adMetadata(item).imageUrls, adMetadata(item).videoThumbnailUrls, adMetadata(item).videoUrls].flat()
+        .filter((url): url is string => typeof url === "string").map(creativeUrlKey).filter(Boolean).map(url => `media:${url}`) : []),
       ...[item.sourceUrl, item.snapshotUrl].map(url => creativeUrlKey(url)).filter(Boolean).map(url => `url:${url}`),
       copy.split(" ").length >= 3 && `copy:${copy}|${normalizedWords(item.format || "")}|${creativeUrlKey(item.landingPageUrl)}`]
       .filter((key): key is string => Boolean(key)).map(key => `${item.source}:${key}`);
@@ -52,6 +54,18 @@ export function rankCaptureCandidates<T extends CaptureCandidate>(items: T[]): T
       } else keys.set(key, index);
     }
   });
+  if (apifyMedia) {
+    for (let left = 0; left < sorted.length; left++) for (let right = left + 1; right < sorted.length; right++) {
+      if (sorted[left].source !== sorted[right].source) continue;
+      const a = new Set(message(sorted[left]).split(" ").filter(Boolean));
+      const b = new Set(message(sorted[right]).split(" ").filter(Boolean));
+      if (a.size < 3 || b.size < 3) continue;
+      const overlap = [...a].filter(word => b.has(word)).length / new Set([...a, ...b]).size;
+      if (overlap >= .85 && normalizedWords(sorted[left].format || "") === normalizedWords(sorted[right].format || "")) {
+        const x = find(left), y = find(right); parents[Math.max(x, y)] = Math.min(x, y);
+      }
+    }
+  }
   const unique = sorted.filter((_, index) => find(index) === index);
   const ranked: T[] = [], seen = new Set<string>();
   while (unique.length) {

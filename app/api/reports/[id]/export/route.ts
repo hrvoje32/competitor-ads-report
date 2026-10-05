@@ -1,4 +1,4 @@
-import { filterBrandAd } from "@/lib/brand-ad-filter";
+import { eligibleAnalysisEvidence, filterBrandAd } from "@/lib/brand-ad-filter";
 import { NextRequest } from "next/server";
 import PptxGenJS from "pptxgenjs";
 import sharp from "sharp";
@@ -373,11 +373,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (brandReport.analysisNeedsRegeneration || brandReport.adEvidence.some(item => (item.selectedForSlide || item.selectedForAnalysisEvidence) && filterBrandAd(item, brandReport.brand).brandFilterStatus === "EXCLUDED")) {
       return new Response("Selected ads no longer match brand filters. Review evidence and regenerate analysis before exporting.", { status: 400 });
     }
-    const googleCount = brandReport.adEvidence.filter(item => item.source === "GOOGLE" && item.selectedForSlide).length;
-    const metaCount = brandReport.adEvidence.filter(item => item.source === "META" && item.selectedForSlide).length;
-    const analysisCount = brandReport.adEvidence.filter(item => item.selectedForAnalysisEvidence).length;
-    if (googleCount > 8 || metaCount > 8 || analysisCount > 3) {
-      return new Response("Reduce source selections to 8 and analysis selections to 3 per brand before exporting.", { status: 400 });
+    // Bound legacy selections in memory; retain every original database record.
+    // Use the same ordered evidence subset and labels as AI analysis.
+    brandReport.adEvidence = eligibleAnalysisEvidence(brandReport.adEvidence, brandReport.brand);
+    if (brandReport.adEvidence.filter(item => item.selectedForAnalysisEvidence).length > 3) {
+      return new Response("Reduce analysis slide selections to 3 per brand before exporting.", { status: 400 });
     }
   }
 

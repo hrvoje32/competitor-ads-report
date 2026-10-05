@@ -47,6 +47,10 @@ async function main() {
   const { testMetaConnection } = await import("../lib/meta-ad-library");
 
   assert.deepEqual(previousProviders([]), { GOOGLE: "APIFY", META: "APIFY" });
+  for (const GOOGLE of ["APIFY", "OFFICIAL"] as const) for (const META of ["APIFY", "OFFICIAL"] as const) {
+    assert.deepEqual(previousProviders([{ source: "GOOGLE", provider: GOOGLE }, { source: "META", provider: META }]), { GOOGLE, META });
+    assert.equal(automationRequestSchema.safeParse({ providers: { GOOGLE, META } }).success, true);
+  }
   assert.equal(automationRequestSchema.safeParse({ providers: { GOOGLE: "invalid", META: "OFFICIAL" } }).success, false);
   assert.equal(bigQueryOptions({ query: "SELECT 1", maximumBytesBilled: "999999999999" }).maximumBytesBilled, "10737418240");
   assert.equal(googleDate({ value: "2026-09-03" })?.toISOString(), "2026-09-03T00:00:00.000Z");
@@ -103,6 +107,7 @@ async function main() {
     const item = { id: `evidence-${evidence.length}`, localImagePath: null, captureCandidateRank: null, officialCaptureAttemptedAt: null, ...create }; evidence.push(item); return item;
   });
   mock.method(prisma.adEvidence, "findMany", async ({ where }: { where: Row }) => evidence.filter(item => matches(item, where)));
+  mock.method(prisma.adEvidence, "findFirst", async ({ where }: { where: Row }) => evidence.find(item => matches(item, where)) ?? null);
   mock.method(prisma.adEvidence, "count", async ({ where }: { where: Row }) => evidence.filter(item => matches(item, where)).length);
   mock.method(prisma.adEvidence, "update", async ({ where, data }: { where: Row; data: Row }) => {
     const item = evidence.find(item => matches(item, where)); assert.ok(item); return assign(item, data);
@@ -183,10 +188,12 @@ async function main() {
   evidence[0].officialCaptureAttemptedAt = new Date();
   const googleBudget = budgets.find(row => row.source === "GOOGLE")!;
   googleBudget.attempts = 8;
-  mock.method(prisma.adMedia, "count", async () => 1); // Keep a download pending; no storage calls.
+  const priorApifyCalls = apifyCalls;
   await startBrandAutomation("brand-report", { providers: { GOOGLE: "APIFY", META: "OFFICIAL" } });
   await advanceBrandCollection("brand-report");
-  assert.equal(evidence[0].captureStatus, "PENDING", "Apify can still retry/download after an official failure");
+  assert.equal(apifyCalls, priorApifyCalls, "Regeneration reuses a completed dataset instead of starting another paid run");
+  assert.equal(evidence[0].captureStatus, "CAPTURE_FAILED");
+  assert.equal(runs[0].status, "SUCCEEDED", "Exhausted media does not prevent partial report analysis");
   assert.equal(googleBudget.attempts, 8, "Provider switching must not restore the official budget");
   console.log("Provider switching, official collection, cost guard, concurrency, and evidence preservation tests passed.");
 }

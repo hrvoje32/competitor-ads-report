@@ -1,5 +1,7 @@
+import { MAX_REPORT_CREATIVES_PER_SOURCE } from "@/lib/ad-evidence-limits";
+import { apifyCandidatePool, rankedApifyCandidates } from "@/lib/apify-selection";
 import { filterBrandAd, hasUsableScreenshot } from "@/lib/brand-ad-filter";
-import { rankCaptureCandidates, MAX_OFFICIAL_CAPTURE_ATTEMPTS_PER_SOURCE, MAX_OFFICIAL_CREATIVE_CAPTURES_PER_SOURCE } from "@/lib/official-capture-policy";
+import { rankCaptureCandidates, MAX_OFFICIAL_CAPTURE_ATTEMPTS_PER_SOURCE } from "@/lib/official-capture-policy";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
@@ -39,16 +41,20 @@ export default async function BrandReportPage({ params, searchParams }: { params
   });
   const sourceCounts = (["GOOGLE", "META"] as const).map(source => {
     const items = br.adEvidence.filter(item => item.source === source);
-    const matched = items.filter(item => item.brandFilterStatus === "INCLUDED");
+    const run = br.providerRuns.find(run => run.source === source);
+    const pool = run?.provider === "APIFY" ? apifyCandidatePool(items, run.datasetId) : items;
+    const matched = pool.filter(item => item.brandFilterStatus === "INCLUDED");
     const candidates = rankCaptureCandidates(matched).filter(item => item.localImagePath || item.snapshotUrl || item.sourceUrl).slice(0, MAX_OFFICIAL_CAPTURE_ATTEMPTS_PER_SOURCE);
     items.forEach(item => { item.captureCandidateRank = null; });
     candidates.forEach((item, index) => { item.captureCandidateRank = index + 1; });
-    const official = br.providerRuns.find(run => run.source === source)?.provider === "OFFICIAL";
-    return { source, official, collected: items.length, matched: matched.length, excluded: items.length - matched.length,
+    const official = run?.provider === "OFFICIAL";
+    const ranked = official ? rankCaptureCandidates(matched) : rankedApifyCandidates(matched, run?.datasetId);
+    const selected = items.filter(item => item.selectedForSlide && hasUsableScreenshot(item)).slice(0, MAX_REPORT_CREATIVES_PER_SOURCE);
+    return { source, official, provider: run?.provider === "OFFICIAL" ? (source === "GOOGLE" ? "BigQuery" : "Meta API") : run ? "Apify" : "Manual", collected: pool.length, unique: ranked.length, selected: selected.length, matched: matched.length, excluded: pool.length - matched.length,
       candidates: candidates.length, attempts: br.officialCaptureStates.find(state => state.source === source)?.attempts ?? 0,
-      stored: items.filter(hasUsableScreenshot).length };
+      stored: selected.length };
   });
-  const slideLimit = br.providerRuns.find(run => run.source === (tab === "google" ? "GOOGLE" : "META"))?.provider === "OFFICIAL" ? MAX_OFFICIAL_CREATIVE_CAPTURES_PER_SOURCE : 8;
+  const slideLimit = MAX_REPORT_CREATIVES_PER_SOURCE;
   const previous = br.previousBrandReport ?? await findPreviousCompletedBrandReport(br.brandId, br.report.year, br.report.month);
   const previousComparison = previous ? monthName(previous.report.month, previous.report.year, "EN") : null;
   const tabs = [{ key: "google", label: "GOOGLE ADS" }, { key: "social", label: "SOCIAL MEDIA ADS" }, { key: "analysis", label: "ANALYSIS" }];

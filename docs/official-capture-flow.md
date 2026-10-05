@@ -2,8 +2,9 @@
 
 Google BigQuery and Meta API authentication and requests are unchanged. Their
 normalizers now retain the available owner/legal-name metadata for filtering.
-Apify retains its existing provider, media download flow, and eight-image limit;
-configured brand filters also protect its evidence from cross-brand selection.
+Apify uses a bounded direct-media flow with up to five stored representatives;
+see [Apify production evidence](apify-production-flow.md) for its lighter safety
+filters, actor limits and regeneration behavior.
 
 ## Database changes
 
@@ -77,9 +78,9 @@ The same guard applies to manual official capture. Saved screenshots are reused.
 The maximum is 16 official Browserless sessions per brand report. A session may
 perform the existing same-ad Meta URL fallback; that is not another browser session.
 
-The review counts show collected, included, excluded, candidate, attempt and stored
-totals independently for Google and Meta. Stored totals include retained historical
-images; excluded images remain inspectable and are never used in new analysis.
+The review counts show collected, unique, selected, excluded, candidate, attempt
+and selected stored totals independently for Google and Meta. Historical and
+excluded images remain inspectable; excluded images are never used in new analysis.
 
 ## Capture and analysis
 

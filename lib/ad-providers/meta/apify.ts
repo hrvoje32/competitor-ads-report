@@ -2,13 +2,15 @@ import type { ApifyProvider, CollectionRequest, NormalizedAd } from "@/lib/ad-pr
 import { DEFAULT_META_ACTOR_ID } from "@/lib/ad-providers/apify";
 import { firstText, nestedRecords, parsedDate, text, textArray, uniqueUrls } from "@/lib/ad-providers/normalize";
 import { env } from "@/lib/env";
+import { record } from "@/lib/brand-ad-filter";
+import { MAX_APIFY_CANDIDATES_PER_SOURCE } from "@/lib/ad-evidence-limits";
 
 function cardMedia(cards: unknown) {
   const records = nestedRecords(cards);
   return {
-    images: uniqueUrls(...records.flatMap(card => [card.imageUrl, card.image_url, card.image, card.originalImageUrl])),
-    videos: uniqueUrls(...records.flatMap(card => [card.videoUrl, card.video_url])),
-    thumbnails: uniqueUrls(...records.flatMap(card => [card.videoThumbnailUrl, card.video_thumbnail_url, card.thumbnailUrl])),
+    images: uniqueUrls(...records.flatMap(card => [card.imageUrl, card.image_url, card.image, card.originalImageUrl, card.original_image_url, card.resized_image_url])),
+    videos: uniqueUrls(...records.flatMap(card => [card.videoUrl, card.video_url, card.video_hd_url, card.video_sd_url])),
+    thumbnails: uniqueUrls(...records.flatMap(card => [card.videoThumbnailUrl, card.video_thumbnail_url, card.thumbnailUrl, card.video_preview_image_url])),
   };
 }
 
@@ -16,12 +18,13 @@ export function normalizeMetaApifyAd(item: Record<string, unknown>): NormalizedA
   if (item.resultType && item.resultType !== "ad") return null;
   const externalId = text(item.libraryId ?? item.library_id ?? item.id);
   if (!externalId) return null;
-  const cardUrls = cardMedia(item.cards);
+  const snapshot = record(item.snapshot);
+  const cardUrls = cardMedia([...nestedRecords(item.cards), ...nestedRecords(snapshot.cards), ...nestedRecords(snapshot.images), ...nestedRecords(snapshot.videos)]);
   return {
     source: "META",
     externalId,
-    advertiserId: text(item.pageId ?? item.page_id),
-    advertiserName: text(item.pageName ?? item.page_name),
+    advertiserId: text(item.pageId ?? item.page_id ?? snapshot.page_id),
+    advertiserName: text(item.pageName ?? item.page_name ?? snapshot.page_name),
     headline: firstText(item.headline, item.title),
     bodyText: firstText(item.bodyText, item.body_text, item.primaryText),
     description: firstText(item.description, item.linkDescription),
@@ -53,7 +56,7 @@ export function metaApifyProvider(request: CollectionRequest): ApifyProvider {
       sortBy: "recent",
       dateFrom: request.startDate,
       dateTo: request.endDate,
-      maxResults: request.maxResults ?? 500,
+      maxResults: Math.min(request.maxResults ?? MAX_APIFY_CANDIDATES_PER_SOURCE, MAX_APIFY_CANDIDATES_PER_SOURCE),
       isDetailsPerAd: true,
       includeAboutPage: false,
     },

@@ -1,3 +1,4 @@
+import { MAX_REPORT_CREATIVES_PER_SOURCE } from "@/lib/ad-evidence-limits";
 type EvidenceSummary = {
   source: "GOOGLE" | "META";
   localImagePath: string | null;
@@ -29,8 +30,8 @@ export function reportExportWarnings(brandReports: BrandReportSummary[]) {
     if ([...selectedGoogle, ...selectedMeta, ...selectedAnalysis].some(item => !item.localImagePath)) {
       warnings.push(`${brandReport.brand.name}: selected evidence is missing an uploaded screenshot`);
     }
-    if (selectedGoogle.length > 8) warnings.push(`${brandReport.brand.name}: more than 8 Google images are selected`);
-    if (selectedMeta.length > 8) warnings.push(`${brandReport.brand.name}: more than 8 Social images are selected`);
+    if (selectedGoogle.length > MAX_REPORT_CREATIVES_PER_SOURCE) warnings.push(`${brandReport.brand.name}: only the first 5 selected Google creatives will be exported`);
+    if (selectedMeta.length > MAX_REPORT_CREATIVES_PER_SOURCE) warnings.push(`${brandReport.brand.name}: only the first 5 selected Social creatives will be exported`);
     if (selectedAnalysis.length > 3) warnings.push(`${brandReport.brand.name}: more than 3 analysis images are selected`);
     return warnings;
   });
@@ -39,9 +40,7 @@ export function reportExportWarnings(brandReports: BrandReportSummary[]) {
 export function reportExportBlocked(brandReports: BrandReportSummary[]) {
   return brandReports.some(brandReport => {
     const selected = brandReport.adEvidence.filter(item => item.selectedForSlide || item.selectedForAnalysisEvidence);
-    const googleCount = selected.filter(item => item.source === "GOOGLE" && item.selectedForSlide).length;
-    const metaCount = selected.filter(item => item.source === "META" && item.selectedForSlide).length;
     const analysisCount = selected.filter(item => item.selectedForAnalysisEvidence).length;
-    return googleCount > 8 || metaCount > 8 || analysisCount > 3 || selected.some(item => !item.localImagePath);
+    return analysisCount > 3 || selected.some(item => !item.localImagePath);
   });
 }

@@ -1,4 +1,5 @@
 import { normalizeGoogleDomain } from "@/lib/google-domain";
+import { MAX_REPORT_CREATIVES_PER_SOURCE } from "@/lib/ad-evidence-limits";
 
 export type BrandAdFilters = {
   adIncludeKeywords?: string[];
@@ -58,11 +59,12 @@ export function filterBrandAd(item: FilterableAd, config: BrandAdFilters): Brand
     brandFilterReason: `${included ? "Included" : "Excluded"}: ${reason}`,
   });
   const raw = adMetadata(item);
+  const apify = raw.collectionProvider === "APIFY" || (!raw.collectionProvider && raw.importedFrom === "apify");
   const pageId = String(raw.pageId ?? raw.page_id ?? raw.advertiserId ?? "");
   const pages = config.metaPages?.map(page => page.pageId) ?? [];
   // Preserve configured Page ownership even with no optional keyword filters.
   if (item.source === "META" && pages.length && pageId && !pages.includes(pageId)) return result(false, "Meta Page ID does not match this brand");
-  if (item.source === "META" && pages.length && item.externalId && !pageId) return result(false, "collected Meta ad has no verifiable Page ID");
+  if (!apify && item.source === "META" && pages.length && item.externalId && !pageId) return result(false, "collected Meta ad has no verifiable Page ID");
   if (![...include, ...exclude, ...allowed, ...excluded].length) return result(true, "no brand filters configured");
 
   const strongText = [item.headline, item.body, item.description,
@@ -76,6 +78,17 @@ export function filterBrandAd(item: FilterableAd, config: BrandAdFilters): Brand
   if (blockedDomain) return result(false, `matched excluded domain ${blockedDomain}`);
   const creativeExclusion = exclude.find(alias => wordMatch(strongText, alias));
   if (creativeExclusion) return result(false, `matched excluded alias "${creativeExclusion}" in creative text`);
+  if (apify) {
+    // Brand-specific actor input is primary. Missing positive keywords or unknown
+    // destinations are not conflicts; explicit excluded names/domains still are.
+    const destinationConflict = exclude.find(alias => wordMatch(landing.join("\n"), alias));
+    if (destinationConflict) return result(false, `matched excluded alias "${destinationConflict}" in destination metadata`);
+    const knownDestination = landing.some(host => allowed.some(value => matchesDomain(host, value)));
+    const knownPage = item.source === "META" && pageId && pages.includes(pageId);
+    const ownerConflict = exclude.find(alias => wordMatch(ownerText, alias));
+    if (ownerConflict && !knownDestination && !knownPage) return result(false, `matched excluded alias "${ownerConflict}" in advertiser metadata`);
+    return result(true, "brand-specific Apify collection; no explicit brand conflict");
+  }
   // A known destination outside an explicit allowlist wins over an agency-name match.
   if (allowed.length && landing.length && !landing.some(host => allowed.some(value => matchesDomain(host, value)))) return result(false, `landing domain ${landing[0]} is not allowed`);
   const matchedDomain = allowed.find(value => hosts.some(host => matchesDomain(host, value)));
@@ -95,6 +108,8 @@ export function hasUsableScreenshot(item: { localImagePath?: string | null; capt
   return Boolean(item.localImagePath && item.captureStatus !== "CAPTURE_FAILED" && item.captureStatus !== "CAPTURING");
 }
 export function eligibleAnalysisEvidence<T extends FilterableAd & { localImagePath?: string | null; captureStatus?: string; selectedForSlide?: boolean; selectedForAnalysisEvidence?: boolean }>(items: T[], brand: BrandAdFilters): T[] {
+  const counts = { GOOGLE: 0, META: 0 };
   return items.filter(item => filterBrandAd(item, brand).brandFilterStatus === "INCLUDED"
-    && hasUsableScreenshot(item) && (item.selectedForSlide || item.selectedForAnalysisEvidence));
+    && hasUsableScreenshot(item) && (item.selectedForSlide || item.selectedForAnalysisEvidence)
+    && counts[item.source]++ < MAX_REPORT_CREATIVES_PER_SOURCE);
 }

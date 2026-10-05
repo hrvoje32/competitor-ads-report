@@ -105,6 +105,9 @@ export async function tryAutomaticCapture(reportId: string, brandId: string, bra
       refresh(reportId, brandReportId);
       return result;
     }
+    if (["PENDING", "RUNNING", "PROCESSING"].includes(provider.status)) return { error: "Apify collection is still processing direct media. Wait for it to finish before using browser fallback." };
+    const untriedMedia = await prisma.adMedia.count({ where: { adEvidenceId: evidenceId, status: { in: ["PENDING", "DOWNLOADING", "DISCARDED", "STORED"] } } });
+    if (untriedMedia) return { error: "This creative has direct media and was outside the download selection. Browser fallback is reserved for creatives without usable direct media. Use the selected stored creatives or upload evidence." };
     captureUrl = evidence.snapshotUrl || evidence.sourceUrl || undefined;
     if (!captureUrl) return { error: "Automatic capture unavailable. Open the source and upload a screenshot manually." };
     await ensureStorageSlot(brandReportId, evidence.source, evidenceId);

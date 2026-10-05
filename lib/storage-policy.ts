@@ -1,4 +1,5 @@
-export const MAX_REPRESENTATIVE_MEDIA_PER_SOURCE = 8;
+import { MAX_REPORT_CREATIVES_PER_SOURCE } from "@/lib/ad-evidence-limits";
+export const MAX_REPRESENTATIVE_MEDIA_PER_SOURCE = MAX_REPORT_CREATIVES_PER_SOURCE;
 export const MAX_REPRESENTATIVE_MEDIA_PER_BRAND = MAX_REPRESENTATIVE_MEDIA_PER_SOURCE * 2;
 
 export function representativeStorageProjection(brandCount: number, averageImageBytes: number) {
