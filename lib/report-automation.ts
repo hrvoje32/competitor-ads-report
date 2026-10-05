@@ -1,3 +1,4 @@
+import { ANALYSIS_SKIPPED_NO_MEDIA } from "@/lib/automation-result";
 import crypto from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { AdEvidence, AdProviderRun, Prisma } from "@prisma/client";
@@ -613,4 +614,15 @@ export async function markBrandAutomationFailed(brandReportId: string, error: un
   const message = errorMessage(error);
   await prisma.brandReport.update({ where: { id: brandReportId }, data: { automationStatus: "FAILED", automationError: message, automationEndedAt: new Date() } }).catch(() => undefined);
   return message;
+}
+
+export async function markBrandAutomationSkipped(brandReportId: string) {
+  // Retain stored media and previous analysis for review, but do not export it
+  // as findings from this run. Clear selections that proved unreadable.
+  await prisma.$transaction([
+    prisma.adEvidence.updateMany({ where: { brandReportId }, data: { selectedForSlide: false, selectedForAnalysisEvidence: false } }),
+    prisma.brandReport.update({ where: { id: brandReportId }, data: {
+      automationStatus: "READY", automationError: ANALYSIS_SKIPPED_NO_MEDIA, automationEndedAt: new Date(),
+    } }),
+  ]);
 }

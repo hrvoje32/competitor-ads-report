@@ -142,3 +142,26 @@ production storage.
 `node --import tsx scripts/apify-cost-protection.test.ts` covers configuration,
 both actor INPUT limits, PPE/PPR run options, explicit unsupported-cap fallback,
 ambiguous-error handling, effective pricing dates and secret-safe logging.
+
+## Progress recovery and missing images
+
+The report page drives automation through progress GET requests. Keep the page
+open; reopening it resumes active work. A single client loop retries temporary
+network errors, timeout pages and incomplete JSON, with delays capped at 30 seconds.
+Authentication errors stop with a sign-in message. Actor-start POST requests are
+never automatically repeated after an ambiguous response. Each progress request
+advances at most three brands, ordered by their last update.
+
+After collection finishes, analysis uses the readable images available from either
+source. Unreadable selections are removed from analysis/export without deleting
+the records or stored files. If none remain, the brand completes with an explicit
+"Analysis skipped" warning and the report continues. Source failures remain visible.
+PowerPoint exports placeholders for skipped brands rather than previous findings.
+Previous analysis remains available for review. These changes reuse existing
+status/message fields and require no database migration.
+
+Run `node --import tsx scripts/automation-resilience.test.ts` for polling recovery,
+no duplicate start requests, cancellation, empty evidence and partial-source
+completion. `scripts/analysis-evidence.test.ts` covers actual route handling of
+unreadable images and stale citation protection. The PowerPoint tests above also
+verify skipped-brand placeholders and omission of retained findings.

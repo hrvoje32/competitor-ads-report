@@ -1,3 +1,4 @@
+import { finishBrandAutomation } from "@/lib/finish-brand-automation";
 import { automationRequestSchema } from "@/lib/ad-providers/selection";
 import { NextRequest } from "next/server";
 import { POST as generateAnalysis } from "@/app/api/brand-reports/[brandReportId]/generate-analysis/route";
@@ -8,6 +9,7 @@ import {
   groupAndSelectEvidence,
   markBrandAutomationFailed,
   markBrandAutomationReady,
+  markBrandAutomationSkipped,
   startBrandAutomation,
 } from "@/lib/report-automation";
 
@@ -15,22 +17,18 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 async function finishBrand(brandReportId: string) {
-  try {
-    const collection = await advanceBrandCollection(brandReportId);
-    if (!collection.readyForAnalysis || collection.done) return;
-    if (!await claimBrandAnalysis(brandReportId)) return;
-    const selection = await groupAndSelectEvidence(brandReportId);
-    if (!selection.analysis) throw new Error("No usable creatives were stored. Review source and media errors, then retry or upload fallback evidence.");
-    const response = await generateAnalysis(
-      new NextRequest(`http://localhost/api/brand-reports/${brandReportId}/generate-analysis`, { method: "POST" }),
-      { params: Promise.resolve({ brandReportId }) },
-    );
-    const payload = await response.json() as { error?: string };
-    if (!response.ok) throw new Error(payload.error || "OpenAI generation failed.");
-    await markBrandAutomationReady(brandReportId);
-  } catch (error) {
-    await markBrandAutomationFailed(brandReportId, error);
-  }
+  return finishBrandAutomation(brandReportId, {
+    advance: advanceBrandCollection,
+    claim: claimBrandAnalysis,
+    select: groupAndSelectEvidence,
+    generate: id => generateAnalysis(
+      new NextRequest(`http://localhost/api/brand-reports/${id}/generate-analysis`, { method: "POST" }),
+      { params: Promise.resolve({ brandReportId: id }) },
+    ),
+    ready: markBrandAutomationReady,
+    skipped: markBrandAutomationSkipped,
+    failed: markBrandAutomationFailed,
+  });
 }
 
 async function reportSnapshot(reportId: string) {
@@ -97,6 +95,10 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   const { id } = await params;
   const brandReports = await prisma.brandReport.findMany({
     where: { reportId: id, included: true, automationStatus: { in: ["FETCHING", "CAPTURING", "ANALYSING"] } },
+    // Bound each request; rotate through brands instead of processing every
+    // brand concurrently within one Vercel invocation.
+    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+    take: 3,
     select: { id: true },
   });
   if (!brandReports.length) {

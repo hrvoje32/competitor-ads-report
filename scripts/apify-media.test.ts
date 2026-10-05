@@ -139,6 +139,23 @@ async function main() {
   assert.equal(((await zip.file("ppt/slides/slide1.xml")!.async("string")).match(/<p:pic>/g) ?? []).length, 5);
   assert.equal(((await zip.file("ppt/slides/slide2.xml")!.async("string")).match(/<p:pic>/g) ?? []).length, 3);
   assert.equal(google.length, 8, "Legacy records remain intact");
+  // A skipped brand exports honest placeholders, even if an earlier run's
+  // analysis and filter-invalid evidence are retained for review.
+  const { ANALYSIS_SKIPPED_NO_MEDIA } = await import("../lib/automation-result");
+  const staleAnalysis = JSON.stringify({ conclusion: { text: "STALE FINDING MUST NOT BE EXPORTED", evidence: ["G1"] } });
+  const skippedBrand = { brand: { ...brand, name: "Peugeot", logoPath: null }, automationStatus: "READY", automationError: ANALYSIS_SKIPPED_NO_MEDIA, analysisNeedsRegeneration: true, analysisJson: staleAnalysis, analysisEditedJson: staleAnalysis, adEvidence: google };
+  exportReport = { id: "report", title: "Skipped fixture", month: 9, year: 2026, language: "EN", brandReports: [structuredClone(skippedBrand)] };
+  const skippedResponse = await GET(new NextRequest("https://example.test/api/reports/report/export"), { params: Promise.resolve({ id: "report" }) });
+  assert.equal(skippedResponse.status, 200);
+  const skippedZip = await JSZip.loadAsync(await skippedResponse.arrayBuffer());
+  const skippedSlides = await Promise.all([1, 2, 3].map(n => skippedZip.file(`ppt/slides/slide${n}.xml`)!.async("string")));
+  assert.ok(skippedSlides[0].includes("No usable Google ad images"));
+  assert.ok(skippedSlides[1].includes("No usable Meta ad images"));
+  assert.ok(skippedSlides[2].includes("Analysis skipped: no usable ad images"));
+  assert.ok(!skippedSlides.join("").includes("STALE FINDING"));
+  assert.equal((skippedSlides.join("").match(/<p:pic>/g) ?? []).length, 0);
+  assert.equal(skippedBrand.analysisJson, staleAnalysis);
+  assert.equal(skippedBrand.adEvidence.length, 8, "Export masking does not delete retained records");
   console.log("Apify normalization, real image validation/Supabase upload, zero browser use, ranking, five-creative limit, retries, concurrency, reuse, safety, partial analysis and three-slide PPTX tests passed.");
 }
 main().finally(() => mock.restoreAll()).catch(error => { console.error(error); process.exitCode = 1; });

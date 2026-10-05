@@ -1,3 +1,4 @@
+import { analysisWasSkipped } from "@/lib/automation-result";
 import { eligibleAnalysisEvidence, filterBrandAd } from "@/lib/brand-ad-filter";
 import { NextRequest } from "next/server";
 import PptxGenJS from "pptxgenjs";
@@ -288,13 +289,14 @@ async function addAnalysisSlide(
   evidence: Evidence[],
   labels: Map<string, string>,
   language: ReportLanguage,
+  skipped = false,
 ) {
   const slide = pptx.addSlide();
   addHeader(slide, brand.name, language === "HR" ? "MJESEČNA ANALIZA OGLAŠAVANJA" : "MONTHLY ADVERTISING ANALYSIS", period);
   await addLogo(slide, brand.logoPath);
   const sections = analysisSections(rawAnalysis, language);
   if (!sections.length) {
-    slide.addText(language === "HR" ? "Analiza nije generirana" : "Analysis has not been generated", {
+    slide.addText(skipped ? (language === "HR" ? "Analiza je preskočena: nema dostupnih slika oglasa." : "Analysis skipped: no usable ad images available.") : (language === "HR" ? "Analiza nije generirana" : "Analysis has not been generated"), {
       x: ANALYSIS_X, y: 1.72, w: ANALYSIS_WIDTH, h: .35, fontFace: "Arial", fontSize: 18, color: MUTED, margin: 0,
     });
   } else {
@@ -370,6 +372,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   for (const brandReport of report.brandReports) {
+    if (analysisWasSkipped(brandReport)) {
+      // In-memory only: never present retained findings from an earlier run as
+      // the result of a run that had no readable evidence.
+      brandReport.adEvidence = [];
+      brandReport.analysisJson = null;
+      brandReport.analysisEditedJson = null;
+      continue;
+    }
     if (brandReport.analysisNeedsRegeneration || brandReport.adEvidence.some(item => (item.selectedForSlide || item.selectedForAnalysisEvidence) && filterBrandAd(item, brandReport.brand).brandFilterStatus === "EXCLUDED")) {
       return new Response("Selected ads no longer match brand filters. Review evidence and regenerate analysis before exporting.", { status: 400 });
     }
@@ -435,7 +445,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         labels,
         brandReport.googleStatus === "FAILED"
           ? language === "HR" ? `Google izvor nije uspio: ${brandReport.googleError || "Podaci nisu prikupljeni"}` : `Google source failed: ${brandReport.googleError || "No data was collected"}`
-          : language === "HR" ? "Za ovo izvještajno razdoblje nisu prikupljeni Google oglasi" : "No Google evidence was collected for this report period",
+          : language === "HR" ? "Nema dostupnih slika Google oglasa za ovo izvještajno razdoblje" : "No usable Google ad images are available for this report period",
       );
 
       slide = pptx.addSlide();
@@ -452,7 +462,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         labels,
         brandReport.metaStatus === "FAILED"
           ? language === "HR" ? `Meta izvor nije uspio: ${brandReport.metaError || "Podaci nisu prikupljeni"}` : `Meta source failed: ${brandReport.metaError || "No data was collected"}`
-          : language === "HR" ? "Za ovo izvještajno razdoblje nisu prikupljeni Meta oglasi" : "No Meta evidence was collected for this report period",
+          : language === "HR" ? "Nema dostupnih slika Meta oglasa za ovo izvještajno razdoblje" : "No usable Meta ad images are available for this report period",
       );
 
       await addAnalysisSlide(
@@ -463,6 +473,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         analysisEvidence,
         labels,
         language,
+        analysisWasSkipped(brandReport),
       );
     }
 

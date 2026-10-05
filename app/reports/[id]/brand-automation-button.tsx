@@ -1,11 +1,10 @@
 "use client";
 
 import type { ProviderSelection } from "@/lib/ad-providers/selection";
+import { automationRequest, AutomationRequestError } from "@/lib/automation-client";
 import ProviderFields from "./provider-fields";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-
-const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds));
 
 export default function BrandAutomationButton({ reportId, brandReportId, initialProviders, processing }: { reportId: string; brandReportId: string; initialProviders: ProviderSelection; processing: boolean }) {
   const router = useRouter();
@@ -18,28 +17,15 @@ export default function BrandAutomationButton({ reportId, brandReportId, initial
     setPending(true);
     setError("");
     try {
-      const response = await fetch(`/api/reports/${reportId}/automate`, {
+      await automationRequest(`/api/reports/${reportId}/automate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ brandReportId, providers }),
       });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error || "Unable to start brand automation.");
+      // ReportActions owns the single report-wide progress loop.
       router.refresh();
-      while (true) {
-        const statusResponse = await fetch(`/api/reports/${reportId}/automate`, { cache: "no-store" });
-        const status = await statusResponse.json() as { done?: boolean; error?: string; brands?: Array<{ id: string; automationStatus: string; automationError?: string | null }> };
-        if (!statusResponse.ok) throw new Error(status.error || "Unable to check automation status.");
-        const brand = status.brands?.find(item => item.id === brandReportId);
-        router.refresh();
-        if (brand && !["PENDING", "FETCHING", "CAPTURING", "ANALYSING"].includes(brand.automationStatus)) {
-          if (brand.automationError) setError(brand.automationError);
-          break;
-        }
-        await wait(3_000);
-      }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Brand automation failed.");
+      setError(cause instanceof AutomationRequestError && !cause.retryable ? cause.message : "Could not confirm the start response. Checking existing progress; do not start another run.");
     } finally {
       setPending(false);
       router.refresh();

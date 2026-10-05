@@ -1,3 +1,4 @@
+import { analysisWasSkipped, ANALYSIS_SKIPPED_NO_MEDIA } from "@/lib/automation-result";
 import { previousProviders, providerLabel } from "@/lib/ad-providers/selection";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -86,7 +87,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         const captureFailed = brandReport.adEvidence.filter(item => item.captureStatus === "CAPTURE_FAILED").length;
         const googleRun = brandReport.providerRuns.find(run => run.source === "GOOGLE");
         const metaRun = brandReport.providerRuns.find(run => run.source === "META");
-        const errors = [brandReport.googleError, brandReport.metaError, brandReport.googleMediaError, brandReport.metaMediaError, brandReport.automationError].filter((value): value is string => Boolean(value));
+        const skipped = analysisWasSkipped(brandReport);
+        const errors = [brandReport.googleError, brandReport.metaError, brandReport.googleMediaError, brandReport.metaMediaError, skipped ? null : brandReport.automationError].filter((value): value is string => Boolean(value));
         const sourceSummary = (label: string, status: StatusValue, count: number, selected: number, run?: typeof googleRun) => {
           if (status === "FETCHING") return `${label}: Fetching through ${providerLabel(label.toUpperCase(), run?.provider ?? "APIFY")}…`;
           if (status === "CAPTURING") return `${label}: ${run?.itemCount ?? count} ads collected · storing media…`;
@@ -103,7 +105,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                 <p>{sourceSummary("Google", brandReport.googleStatus, google.length, googleSelected, googleRun)}</p>
                 <p>{sourceSummary("Meta", brandReport.metaStatus, meta.length, metaSelected, metaRun)}</p>
                 <p>Media: {captured} evidence images stored{captureFailed ? ` / ${captureFailed} failed` : ""}</p>
-                <p>Analysis: {brandReport.automationStatus === "ANALYSING" ? "running" : brandReport.automationStatus === "FAILED" ? "failed" : brandReport.analysisJson ? "ready" : "waiting"}</p>
+                <p>Analysis: {skipped ? "skipped — no usable images" : brandReport.automationStatus === "ANALYSING" ? "running" : brandReport.automationStatus === "FAILED" ? "failed" : brandReport.analysisJson ? "ready" : "waiting"}</p>
                 <p>Previous comparison: {brandReport.previousBrandReport ? monthName(brandReport.previousBrandReport.report.month, brandReport.previousBrandReport.report.year, "EN") : "None"}</p>
               </div>
             </div>
@@ -113,6 +115,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               <Status label="Meta" value={brandReport.metaStatus}/>
             </div>
           </div>
+          {skipped && <p className="mt-3 rounded-md bg-amber-50 p-3 text-sm text-amber-900">{ANALYSIS_SKIPPED_NO_MEDIA}</p>}
           {errors.length > 0 && <ul className="mt-3 list-disc rounded-md bg-rose-50 p-3 pl-8 text-sm text-rose-800">{[...new Set(errors)].map(error => <li key={error}>{error}</li>)}</ul>}
           <div className="mt-4 flex flex-wrap justify-end gap-2">
             <Link className="button button-secondary shrink-0" href={`/reports/${id}/brands/${brandReport.id}`}>Review Brand Report</Link>

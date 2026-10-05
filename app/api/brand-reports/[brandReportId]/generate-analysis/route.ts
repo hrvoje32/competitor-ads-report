@@ -1,3 +1,4 @@
+import { NO_USABLE_EVIDENCE } from "@/lib/automation-result";
 import OpenAI from "openai";
 import sharp from "sharp";
 import { NextRequest } from "next/server";
@@ -157,7 +158,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     current.adEvidence = eligibleAnalysisEvidence(current.adEvidence, current.brand);
     if (!current.adEvidence.length) {
       return Response.json(
-        { error: "No usable included evidence selected. Select at least one matched ad with a stored screenshot before generating analysis." },
+        { code: NO_USABLE_EVIDENCE, error: "No usable included evidence selected. Select at least one matched ad with a stored screenshot before generating analysis." },
         { status: 400 },
       );
     }
@@ -167,6 +168,20 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     if (analysisEvidenceCount > 3) {
       return Response.json({ error: "Reduce selected analysis evidence to a maximum of 3 before generating analysis." }, { status: 400 });
     }
+    const readableCurrent = await readableEvidence(current.adEvidence as InputEvidence[], item => imagePart(item, item.id));
+    const currentEvidence = readableCurrent.map(entry => entry.item);
+    if (!currentEvidence.length) return Response.json({ code: NO_USABLE_EVIDENCE, error: "No selected, brand-matched screenshots could be read from storage. Upload usable evidence before generating analysis." }, { status: 400 });
+    const readableIds = new Set(currentEvidence.map(item => item.id));
+    const unreadableIds = current.adEvidence.filter(item => !readableIds.has(item.id)).map(item => item.id);
+    if (unreadableIds.length) await prisma.$transaction([
+      prisma.adEvidence.updateMany({
+        where: { id: { in: unreadableIds }, brandReportId },
+        data: { selectedForSlide: false, selectedForAnalysisEvidence: false },
+      }),
+      // If AI generation subsequently fails, old citations must not be exported
+      // against the reduced evidence set. Successful generation clears this.
+      prisma.brandReport.update({ where: { id: brandReportId }, data: { analysisNeedsRegeneration: true } }),
+    ]);
     if (!process.env.OPENAI_API_KEY) {
       return Response.json({ error: "Analysis is unavailable: OPENAI_API_KEY is not configured." }, { status: 503 });
     }
@@ -194,9 +209,6 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       data: { previousBrandReportId: prior?.id ?? null },
     });
 
-    const readableCurrent = await readableEvidence(current.adEvidence as InputEvidence[], item => imagePart(item, item.id));
-    const currentEvidence = readableCurrent.map(entry => entry.item);
-    if (!currentEvidence.length) return Response.json({ error: "No selected, brand-matched screenshots could be read from storage. Upload usable evidence before generating analysis." }, { status: 400 });
     const currentLabels = labels(currentEvidence);
     const readablePrior = await readableEvidence(eligibleAnalysisEvidence(prior?.adEvidence ?? [], current.brand) as InputEvidence[], item => imagePart(item, item.id));
     const priorAllEvidence = readablePrior.map(entry => entry.item);
